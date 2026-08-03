@@ -28,10 +28,19 @@ export type AgentChatToolDefinition = {
   parameters: Record<string, unknown>;
 };
 
+export type AgentChatToolChoice =
+  | "auto"
+  | "required"
+  | {
+      type: "function";
+      function: { name: string };
+    };
+
 export type AgentChatCompletionInput = {
   messages: AgentChatMessage[];
   tools: AgentChatToolDefinition[];
   model?: string;
+  toolChoice?: AgentChatToolChoice;
   signal?: AbortSignal;
 };
 
@@ -115,7 +124,7 @@ export function createOpenAiChatClient(
               parameters: tool.parameters,
             },
           })),
-          tool_choice: "auto",
+          tool_choice: input.toolChoice ?? "auto",
         },
         { signal: input.signal }
       );

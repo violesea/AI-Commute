@@ -219,4 +219,127 @@ describe("travel planning integration", () => {
       ]),
     });
   });
+
+  it("forces create_trip when the model ends its evidence pass with plain text", async () => {
+    const user = await prisma.user.create({
+      data: {
+        email: `travel-create-nudge-${Date.now()}@example.com`,
+        name: "旅行落地用户",
+        passwordHash: "hash",
+        settings: {
+          create: {
+            defaultCity: "北京",
+            timezone: "Asia/Shanghai",
+            originName: "北京",
+            originLngLat: "116.4,39.9",
+            routePreference: "balanced",
+          },
+        },
+      },
+    });
+    const session = await startPlanningSession({
+      userId: user.id,
+      purpose: "travel",
+      prompt: "请规划2026年8月8日至11日北京出发、锡林郭勒盟自驾4天3晚的旅行。",
+    });
+    const toolChoices: unknown[] = [];
+    let callCount = 0;
+    const chatClient: AgentChatClient = {
+      async complete(input) {
+        toolChoices.push(input.toolChoice);
+        callCount += 1;
+
+        if (callCount === 1) {
+          return {
+            message: {
+              role: "assistant",
+              content: "证据已经整理完毕，现在生成完整行程。",
+            },
+          };
+        }
+
+        return {
+          message: {
+            role: "assistant",
+            content: "已落地旅行行程。",
+            toolCalls: [
+              {
+                id: "create-after-nudge",
+                name: "create_trip",
+                arguments: {
+                  title: "北京到锡林郭勒",
+                  timezone: "Asia/Shanghai",
+                  targetArriveAt: "2026-08-11T20:30:00.000Z",
+                  finalStopName: "北京",
+                  stops: [
+                    { order: 0, name: "北京", kind: "origin" },
+                    { order: 1, name: "正蓝旗", kind: "destination" },
+                    { order: 2, name: "锡林浩特", kind: "destination" },
+                    { order: 3, name: "北京", kind: "destination" },
+                  ],
+                  legs: [
+                    {
+                      order: 0,
+                      originName: "北京",
+                      destinationName: "正蓝旗",
+                      routeMinutes: 324,
+                      totalMinutes: 364,
+                      bufferComponents: [],
+                      mode: "driving",
+                      segmentTitle: "D1·去程",
+                    },
+                    {
+                      order: 1,
+                      originName: "正蓝旗",
+                      destinationName: "上都湖",
+                      routeMinutes: 40,
+                      totalMinutes: 50,
+                      bufferComponents: [],
+                      mode: "driving",
+                      segmentTitle: "D1·湖泊",
+                    },
+                    {
+                      order: 2,
+                      originName: "上都湖",
+                      destinationName: "锡林浩特",
+                      routeMinutes: 159,
+                      totalMinutes: 174,
+                      bufferComponents: [],
+                      mode: "driving",
+                      segmentTitle: "D2·转场",
+                    },
+                    {
+                      order: 3,
+                      originName: "锡林浩特",
+                      destinationName: "北京",
+                      routeMinutes: 600,
+                      totalMinutes: 660,
+                      bufferComponents: [],
+                      mode: "driving",
+                      segmentTitle: "D4·返程长线",
+                    },
+                  ],
+                  travelPlan,
+                },
+              },
+            ],
+          },
+        };
+      },
+    };
+
+    const result = await runPlanningSession(session.id, {
+      amapClient: createMockAmapClient(),
+      chatClient,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.tripId).toBeTruthy();
+    expect(callCount).toBe(2);
+    expect(toolChoices[0]).toBeUndefined();
+    expect(toolChoices[1]).toEqual({
+      type: "function",
+      function: { name: "create_trip" },
+    });
+  });
 });

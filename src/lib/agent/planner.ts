@@ -1577,18 +1577,40 @@ async function runConversationAttempt(input: {
   requireCreateTrip: boolean;
 }) {
   let latestTripId = input.context.tripId ?? null;
+  let forceCreateTrip = false;
+  let forceCreateTripFallbackUsed = false;
 
   while (true) {
     assertAgentRunActive(input.signal);
-    const completion = await input.chatClient.complete({
-      messages: input.messages,
-      tools: TOOL_DEFINITIONS,
-      model:
-        input.context.purpose === "travel"
-          ? TRAVEL_PLANNING_MODEL
-          : input.settings.model,
-      signal: input.signal,
-    });
+    let completion;
+
+    try {
+      completion = await input.chatClient.complete({
+        messages: input.messages,
+        tools: TOOL_DEFINITIONS,
+        model:
+          input.context.purpose === "travel"
+            ? TRAVEL_PLANNING_MODEL
+            : input.settings.model,
+        toolChoice: forceCreateTrip
+          ? { type: "function", function: { name: "create_trip" } }
+          : undefined,
+        signal: input.signal,
+      });
+    } catch (error) {
+      if (forceCreateTrip && !forceCreateTripFallbackUsed) {
+        forceCreateTrip = false;
+        forceCreateTripFallbackUsed = true;
+        input.messages.push({
+          role: "user",
+          content:
+            "工具调用校验：请立即调用 create_trip 落地当前完整方案；不要只返回文字。",
+        });
+        continue;
+      }
+
+      throw error;
+    }
     const assistantMessage = completion.message;
     input.messages.push(assistantMessage);
 
@@ -1606,6 +1628,20 @@ async function runConversationAttempt(input: {
 
     const toolCalls = assistantMessage.toolCalls ?? [];
     if (toolCalls.length === 0) {
+      if (
+        input.requireCreateTrip &&
+        !forceCreateTrip &&
+        !forceCreateTripFallbackUsed
+      ) {
+        forceCreateTrip = true;
+        input.messages.push({
+          role: "user",
+          content:
+            "工具调用校验：证据已经足够。请立即调用 create_trip 落地完整行程，不要再解释或以纯文本结束。",
+        });
+        continue;
+      }
+
       if (input.requireCreateTrip) {
         throw new Error("AI 结束了规划，但没有调用 create_trip。");
       }
