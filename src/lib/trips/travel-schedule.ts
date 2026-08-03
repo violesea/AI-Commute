@@ -234,7 +234,8 @@ function readDayMarker(value?: string) {
   if (!value) return undefined;
 
   const match =
-    value.match(/\bD\s*(\d{1,2})\b/i) ?? value.match(/第\s*(\d{1,2})\s*天/);
+    value.match(/\b(?:D|Day)\s*(\d{1,2})\b/i) ??
+    value.match(/第\s*(\d{1,2})\s*天/);
   return match ? Number(match[1]) : undefined;
 }
 

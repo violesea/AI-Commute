@@ -184,6 +184,58 @@ describe("travel itinerary schedule", () => {
     expect(localTime(result.targetArriveAt)).toBe("2026-08-11 17:30");
   });
 
+  it("recognizes English Day markers when grouping route legs by calendar day", () => {
+    const result = normalizeTravelItinerarySchedule({
+      prompt: "请规划2026-08-08至2026-08-12北京出发的自驾旅行",
+      timezone: "Asia/Shanghai",
+      stops: [],
+      legs: [
+        {
+          order: 0,
+          originName: "北京",
+          destinationName: "正蓝旗",
+          routeMinutes: 60,
+          mode: "driving",
+          segmentTitle: "Day1 去程",
+        },
+        {
+          order: 1,
+          originName: "正蓝旗",
+          destinationName: "上都湖",
+          routeMinutes: 30,
+          mode: "driving",
+          segmentTitle: "Day1 晚间",
+        },
+        {
+          order: 2,
+          originName: "上都湖",
+          destinationName: "锡林浩特",
+          routeMinutes: 60,
+          mode: "driving",
+          segmentTitle: "Day2 上午",
+        },
+        {
+          order: 3,
+          originName: "锡林浩特",
+          destinationName: "北京",
+          routeMinutes: 60,
+          mode: "driving",
+          segmentTitle: "Day5 返程",
+        },
+      ],
+    });
+
+    expect(result.legs.map((leg) => [
+      localTime(leg.latestDepartAt),
+      localTime(leg.targetArriveAt),
+    ])).toEqual([
+      ["2026-08-08 07:00", "2026-08-08 08:00"],
+      ["2026-08-08 08:00", "2026-08-08 08:30"],
+      ["2026-08-09 08:00", "2026-08-09 09:00"],
+      ["2026-08-12 06:30", "2026-08-12 07:30"],
+    ]);
+  });
+
   it("does not let an inconsistent comparison total create a cross-midnight leg", () => {
     const result = normalizeTravelItinerarySchedule({
       prompt: "请规划2026年8月8日至11日北京出发、锡林郭勒盟自驾4天3晚的旅行",
