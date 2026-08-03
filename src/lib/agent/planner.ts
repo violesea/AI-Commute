@@ -883,6 +883,39 @@ const TOOL_DEFINITIONS: AgentChatToolDefinition[] = [
   },
 ];
 
+function requireToolParameter(
+  parameters: Record<string, unknown>,
+  parameter: string
+) {
+  const required = Array.isArray(parameters.required)
+    ? parameters.required.filter((value): value is string => typeof value === "string")
+    : [];
+
+  return {
+    ...parameters,
+    required: [...new Set([...required, parameter])],
+  };
+}
+
+export function getAgentToolDefinitions(purpose: AgentPlanningPurpose) {
+  if (purpose !== "travel") {
+    return TOOL_DEFINITIONS;
+  }
+
+  return TOOL_DEFINITIONS.map((tool) => {
+    if (tool.name !== "create_trip") {
+      return tool;
+    }
+
+    return {
+      ...tool,
+      description:
+        "Create the final planned trip. In travel mode, travelPlan is mandatory and must be complete in the same tool call.",
+      parameters: requireToolParameter(tool.parameters, "travelPlan"),
+    };
+  });
+}
+
 const COMMUTE_SYSTEM_PROMPT = `You are a personal commute-planning AI. Current dates should be interpreted in Beijing time.
 You must plan, calculate, compare, and decide yourself. The app only exposes tools; it will not hard-code route ranking, destination extraction, or buffer minutes for you.
 Available tools include user settings, memories, all AMap POI/weather/transit/driving/walking/bicycling tools, create_trip, and current-route update tools. Keep the evidence pass bounded and move to create_trip as soon as the required evidence is available. Weather, route results, user preferences, and memories are evidence for your decision, not fixed app rules.
@@ -2018,10 +2051,14 @@ export function stringifyToolResult(result: unknown) {
 }
 
 function stringifyToolError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const instruction = message.includes("结构化 travelPlan")
+    ? "旅行模式的 create_trip 必须在本次调用中包含完整 travelPlan 对象（destination、weather、transport、budget、attractions、lodging、food、pitfalls），不能只提交 stops 和 legs。请压缩文字后立即重新调用 create_trip。"
+    : "工具调用未执行成功。请根据错误修正参数后重新调用同一个工具，不要只返回文字。";
+
   return JSON.stringify({
-    error: error instanceof Error ? error.message : String(error),
-    instruction:
-      "工具调用未执行成功。请根据错误修正参数后重新调用同一个工具，不要只返回文字。",
+    error: message,
+    instruction,
   });
 }
 
@@ -2093,7 +2130,7 @@ async function runConversationAttempt(input: {
     try {
       completion = await input.chatClient.complete({
         messages: input.messages,
-        tools: TOOL_DEFINITIONS,
+        tools: getAgentToolDefinitions(input.context.purpose),
         purpose: input.context.purpose,
         maxOutputTokens:
           input.context.purpose === "travel"

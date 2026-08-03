@@ -61,6 +61,7 @@ type EnvSource = Partial<Record<string, string | undefined>>;
 
 const AGENT_MAX_OUTPUT_TOKENS = 32768;
 export const TRAVEL_MAX_OUTPUT_TOKENS = 16384;
+const MAX_ASSISTANT_CONTEXT_CHARS = 1200;
 
 type DeepSeekThinking = {
   type: "enabled" | "disabled";
@@ -99,6 +100,20 @@ function parseToolArguments(value: string | null | undefined) {
   }
 }
 
+function compactAssistantContext(message: AgentChatMessage) {
+  // Tool-call arguments are the authoritative assistant context; verbose model prose only increases later prompt latency.
+  if (message.toolCalls?.length) {
+    return "";
+  }
+
+  const content = message.content ?? "";
+  if (content.length <= MAX_ASSISTANT_CONTEXT_CHARS) {
+    return content;
+  }
+
+  return `${content.slice(0, MAX_ASSISTANT_CONTEXT_CHARS)}\n[assistant context truncated]`;
+}
+
 function toOpenAiMessages(messages: AgentChatMessage[]) {
   return messages.map((message) => {
     if (message.role === "tool") {
@@ -112,7 +127,7 @@ function toOpenAiMessages(messages: AgentChatMessage[]) {
     if (message.role === "assistant") {
       return {
         role: "assistant" as const,
-        content: message.content,
+        content: compactAssistantContext(message),
         tool_calls: message.toolCalls?.map((toolCall) => ({
           id: toolCall.id,
           type: "function" as const,

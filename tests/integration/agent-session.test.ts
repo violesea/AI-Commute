@@ -627,7 +627,7 @@ describe("agent planning sessions", () => {
     });
     let systemText = "";
     let toolNames: string[] = [];
-    let createTripParameters = "";
+    let createTripParameters: Record<string, unknown> | undefined;
     let requestedModel: string | undefined;
     const chatClient: AgentChatClient = {
       async complete({ messages, tools, model }) {
@@ -637,9 +637,8 @@ describe("agent planning sessions", () => {
           .join("\n");
         requestedModel = model;
         toolNames = tools.map((tool) => tool.name);
-        createTripParameters = JSON.stringify(
-          tools.find((tool) => tool.name === "create_trip")?.parameters
-        );
+        createTripParameters = tools.find((tool) => tool.name === "create_trip")
+          ?.parameters;
         throw new Error("stop after travel prompt capture");
       },
     };
@@ -658,7 +657,9 @@ describe("agent planning sessions", () => {
     expect(toolNames).toContain("get_driving_route");
     expect(toolNames).toContain("search_natural_attractions");
     expect(requestedModel).toBe("deepseek-v4-flash");
-    expect(createTripParameters).toContain("travelPlan");
+    expect(createTripParameters).toMatchObject({
+      required: expect.arrayContaining(["travelPlan"]),
+    });
   });
 
   it("uses the user's selected model for commute planning", async () => {
@@ -679,9 +680,14 @@ describe("agent planning sessions", () => {
       prompt: "Plan my commute to the office.",
     });
     let requestedModel: string | undefined;
+    let commuteCreateTripRequired: unknown;
     const chatClient: AgentChatClient = {
-      async complete({ model }) {
+      async complete({ model, tools }) {
         requestedModel = model;
+        commuteCreateTripRequired = (
+          tools.find((tool) => tool.name === "create_trip")?.parameters
+            .required as unknown[] | undefined
+        ) ?? [];
         throw new Error("stop after selected model capture");
       },
     };
@@ -693,6 +699,7 @@ describe("agent planning sessions", () => {
 
     expect(result.status).toBe("failed");
     expect(requestedModel).toBe("deepseek-v4-flash");
+    expect(commuteCreateTripRequired).not.toContain("travelPlan");
   });
 
   it("lets the AI choose AMap tools, route mode, and buffer details", async () => {

@@ -273,6 +273,7 @@ const EXPLICIT_CLOCK_PATTERNS = [
 ] as const;
 
 const SCHEDULE_CLOCK_TOKEN = "__SCHEDULE_CLOCK__";
+const STRUCTURED_SCHEDULE_PLACEHOLDER = /按行程结构化时间\s*[-–—至]\s*按行程结构化时间(?:\s*游览)?/g;
 
 function normalizeScheduledText(value?: string) {
   if (!value) return value;
@@ -288,6 +289,8 @@ function normalizeScheduledText(value?: string) {
   );
 
   return text
+    .replace(STRUCTURED_SCHEDULE_PLACEHOLDER, "按行程安排")
+    .replaceAll("按行程结构化时间", "按行程安排")
     .replace(tokenPattern, "")
     .replace(
       new RegExp(

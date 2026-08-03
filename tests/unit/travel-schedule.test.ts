@@ -451,6 +451,31 @@ describe("travel itinerary schedule", () => {
     expect(JSON.stringify(result)).not.toContain("按行程结构化时间");
   });
 
+  it("replaces internal structured-time placeholders with neutral itinerary text", () => {
+    const result = normalizeTravelItinerarySchedule({
+      prompt: "请规划2026年8月8日至11日北京出发的自驾旅行",
+      timezone: "Asia/Shanghai",
+      stops: [
+        { order: 0, name: "北京", kind: "origin" },
+        { order: 1, name: "正蓝旗", kind: "destination" },
+      ],
+      legs: [
+        {
+          order: 0,
+          originName: "北京",
+          destinationName: "正蓝旗",
+          routeMinutes: 120,
+          mode: "driving",
+          segmentTitle: "D1·去程",
+          segmentDetail: "按行程结构化时间-按行程结构化时间游览",
+        },
+      ],
+    });
+
+    expect(result.legs[0]?.segmentDetail).toBe("按行程安排");
+    expect(JSON.stringify(result)).not.toContain("按行程结构化时间");
+  });
+
   it("rejects a long self-drive leg that arrives after the local sunset safety line", () => {
     expect(() =>
       assertTravelItinerarySchedule({

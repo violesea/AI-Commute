@@ -236,6 +236,55 @@ describe("createOpenAiChatClient", () => {
     completionMock.mockReset();
   });
 
+  it("keeps verbose assistant reasoning out of later model prompts while preserving tool calls", async () => {
+    completionMock.mockResolvedValueOnce({
+      choices: [{ message: { content: "已完成" } }],
+    });
+
+    const client = createOpenAiChatClient({
+      OPENAI_API_KEY: "test-key",
+      OPENAI_BASE_URL: "https://api.deepseek.com/v1",
+    });
+    const verboseContent = "详细推理 ".repeat(500);
+
+    await client.complete({
+      messages: [
+        {
+          role: "assistant",
+          content: verboseContent,
+          toolCalls: [
+            {
+              id: "read-settings",
+              name: "read_settings",
+              arguments: {},
+            },
+          ],
+        },
+        {
+          role: "tool",
+          toolCallId: "read-settings",
+          content: "{}",
+        },
+      ],
+      tools: [],
+      model: "deepseek-v4-flash",
+      purpose: "travel",
+    });
+
+    const requestMessages = completionMock.mock.calls[0]?.[0]?.messages as Array<{
+      role: string;
+      content: string;
+      tool_calls?: Array<{ function: { name: string } }>;
+    }>;
+    expect(requestMessages[0]).toMatchObject({
+      role: "assistant",
+      content: "",
+      tool_calls: [{ function: { name: "read_settings" } }],
+    });
+    expect(requestMessages[0]?.content.length).toBeLessThanOrEqual(1200);
+    completionMock.mockReset();
+  });
+
   it("repairs common malformed JSON from a structured travel tool call", async () => {
     completionMock.mockResolvedValueOnce({
       choices: [
