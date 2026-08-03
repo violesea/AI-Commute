@@ -53,4 +53,15 @@ describe("planning error display", () => {
     });
     expect(budget.instruction).toContain("只需补齐 travelPlan.budget");
   });
+
+  it("tells travel-model retries where the compact recommendation fields belong", () => {
+    const missingAttractions = JSON.parse(
+      stringifyToolError(new Error("travelPlan.attractions must be an array."))
+    );
+
+    expect(missingAttractions.instruction).toContain(
+      "create_trip 顶层补齐 budget、attractions、lodging、food、pitfalls"
+    );
+    expect(missingAttractions.instruction).toContain("至少包含 4 个自然景观");
+  });
 });

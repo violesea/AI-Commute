@@ -681,6 +681,20 @@ const travelPlanSchema = objectParameters(
   ]
 );
 
+// DeepSeek V4 Flash is more reliable when large recommendation arrays are
+// siblings of the route object instead of deeply nested inside it. The server
+// folds these fields back into the canonical TravelPlan before validation.
+const travelPlanCreateCoreSchema = objectParameters(
+  {
+    destination: { type: "string" },
+    summary: { type: "string" },
+    days: { type: "number" },
+    weather: travelWeatherSchema,
+    transport: travelTransportSchema,
+  },
+  ["destination", "summary", "weather", "transport"]
+);
+
 const TOOL_DEFINITIONS: AgentChatToolDefinition[] = [
   {
     name: "read_settings",
@@ -888,20 +902,6 @@ const TOOL_DEFINITIONS: AgentChatToolDefinition[] = [
   },
 ];
 
-function requireToolParameter(
-  parameters: Record<string, unknown>,
-  parameter: string
-) {
-  const required = Array.isArray(parameters.required)
-    ? parameters.required.filter((value): value is string => typeof value === "string")
-    : [];
-
-  return {
-    ...parameters,
-    required: [...new Set([...required, parameter])],
-  };
-}
-
 export function getAgentToolDefinitions(purpose: AgentPlanningPurpose) {
   if (purpose !== "travel") {
     return TOOL_DEFINITIONS;
@@ -915,8 +915,35 @@ export function getAgentToolDefinitions(purpose: AgentPlanningPurpose) {
     return {
       ...tool,
       description:
-        "Create the final planned trip. In travel mode, travelPlan is mandatory and must be complete in the same tool call.",
-      parameters: requireToolParameter(tool.parameters, "travelPlan"),
+        "Create the final planned trip. In travel mode, provide destination, summary, weather, and transport inside travelPlan; provide budget, attractions, lodging, food, and pitfalls as top-level sibling fields. The server folds those fields into travelPlan before validation. Keep the recommendation arrays compact and complete in this same tool call.",
+      parameters: objectParameters(
+        {
+          title: { type: "string" },
+          timezone: { type: "string" },
+          targetArriveAt: { type: "string" },
+          finalStopName: { type: "string" },
+          stops: arrayOfItems(stopSchema),
+          legs: arrayOfItems(legSchema),
+          travelPlan: travelPlanCreateCoreSchema,
+          budget: travelBudgetSchema,
+          attractions: arrayOfItems(travelAttractionSchema),
+          lodging: arrayOfItems(travelLodgingSchema),
+          food: arrayOfItems(travelFoodSchema),
+          pitfalls: arrayOfItems(travelPitfallSchema),
+        },
+        [
+          "title",
+          "timezone",
+          "stops",
+          "legs",
+          "travelPlan",
+          "budget",
+          "attractions",
+          "lodging",
+          "food",
+          "pitfalls",
+        ]
+      ),
     };
   });
 }
@@ -2261,9 +2288,17 @@ export function stringifyToolError(error: unknown) {
   } else if (message.includes("travelPlan.transport")) {
     instruction =
       "保留上一版完整 travelPlan；transport 必须是对象，包含 recommended、reason、driving、transit，且 driving/transit 各自包含 summary、reason、durationMinutes、route。不要只提交 transport 或 stops/legs，立即重新调用完整 create_trip。";
+  } else if (
+    message.includes("travelPlan.attractions") ||
+    message.includes("travelPlan.lodging") ||
+    message.includes("travelPlan.food") ||
+    message.includes("travelPlan.pitfalls")
+  ) {
+    instruction =
+      "本次 create_trip 缺少旅行推荐数组。请保留 travelPlan.destination、summary、weather、transport 和现有 stops/legs；在 create_trip 顶层补齐 budget、attractions、lodging、food、pitfalls 五个字段。attractions 至少包含 4 个自然景观和 1 个人文景点，lodging、food 各至少 1 项，pitfalls 至少 3 项；数组要精简但不能省略，立即重新调用完整 create_trip。";
   } else if (message.includes("结构化 travelPlan") || message.includes("travelPlan.")) {
     instruction =
-      "旅行模式的 create_trip 必须在本次调用中包含完整 travelPlan 对象，同时提供 destination、weather、transport、budget、attractions、lodging、food、pitfalls。不要只补一个字段，也不要只提交 stops 和 legs；请压缩文字后立即重新调用一次完整 create_trip。";
+      "旅行模式的 create_trip 必须在本次调用中包含完整旅行计划：travelPlan 内提供 destination、summary、weather、transport；create_trip 顶层提供 budget、attractions、lodging、food、pitfalls。不要只提交 stops 和 legs；请压缩文字后立即重新调用一次完整 create_trip。";
   }
 
   return JSON.stringify({

@@ -658,8 +658,19 @@ describe("agent planning sessions", () => {
     expect(toolNames).toContain("search_natural_attractions");
     expect(requestedModel).toBe("deepseek-v4-flash");
     expect(createTripParameters).toMatchObject({
-      required: expect.arrayContaining(["travelPlan"]),
+      required: expect.arrayContaining([
+        "travelPlan",
+        "budget",
+        "attractions",
+        "lodging",
+        "food",
+        "pitfalls",
+      ]),
     });
+    const travelPlanProperties = (
+      createTripParameters?.properties as Record<string, unknown> | undefined
+    )?.travelPlan as Record<string, unknown> | undefined;
+    expect(travelPlanProperties?.required).not.toContain("attractions");
   });
 
   it("uses the user's selected model for commute planning", async () => {
