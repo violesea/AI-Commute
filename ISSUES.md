@@ -5,7 +5,7 @@ skills_used:
 model_used: GPT-5
 model_source: visible_runtime
 created_at: 2026-08-03T00:00:00+08:00
-updated_at: 2026-08-04T03:40:00+08:00
+updated_at: 2026-08-04T04:25:37+08:00
 updated_by: codex
 ---
 
@@ -135,6 +135,8 @@ updated_by: codex
 
 追加验证：线上提交 `dcd47a4` 的会话 `cmsdmnsxw0001qn0r85h4yinq` 首次 `create_trip` 因缺少 `travelPlan.transport` 被拒，模型补齐后第二次成功创建行程 `cmsdmqcgw001qqn0r0ov83bx0`；半成品未落盘。旅行日标记兼容已在线生效，但结构化字段缺失仍会产生一次重试，问题继续开放。
 
+追加验证：提交 `b2c4e74` 的会话 `cmsdoazqt0001pp0sbmm0tpwi` 中，模型第二次把四个推荐数组放到 `travelPlan` 外，服务端兼容归并后继续执行校验；该子问题已由本提交覆盖。但后续模型又分别丢失 `mustTry`、完整 `destination` 和可执行的白天时间轴，最终 4 次 `create_trip` 均未落盘，说明应保留上一版完整计划并以机器可读补丁修正，而不是让模型重写整个大对象。
+
 验收：在不放宽旅行计划结构化校验的前提下，减少模型重复构造参数的次数，或提供更明确的机器可读修正反馈。
 
 ## ISSUE-016 · quality · P1 · open
@@ -146,3 +148,11 @@ updated_by: codex
 验收：每个非备选推荐景点必须对应一个路线 stop 和至少一段路线；未安排的推荐必须明确标记为“备选/顺路可选”，并从“本次覆盖”摘要中排除；天气风险、停留时间和提醒任务与实际 stops 保持一致。
 
 追加证据：同一线上行程 `cmsdmqcgw001qqn0r0ov83bx0` 的实际路线已安排平顶山、锡林河九曲湾、达里诺尔湖和锡林郭勒大草原，但推荐清单仍列出未形成独立 stop 的锡林浩特南山森林公园和贝子庙；页面摘要只把已排入路线的 4 个自然景观和 1 个人文景点写入“覆盖”，推荐清单与可执行路线仍需拆分为“已安排”和“备选”。
+
+## ISSUE-017 · bug · P1 · open
+
+旅行 `create_trip` 校验失败后的重试会丢失完整 `travelPlan`，或没有按白天驾驶错误重排时间，复杂请求最终无法落盘。
+
+证据：2026-08-04 提交 `b2c4e74` 的真实会话 `cmsdoazqt0001pp0sbmm0tpwi` 共 4 次 `create_trip`：第一次非法 JSON；第二次扁平推荐数组归并后暴露 `food[].mustTry` 缺失；第三次仅保留 `travelPlan.attractions`，被拒绝缺少 `destination`；第四次完整计划仍安排 D1 多伦湖→锡林九曲，预计 18:59 到达，晚于 18:54 白天驾驶安全线。会话终态为 `failed`，`tripId=null`，没有半成品行程。
+
+验收：结构化校验失败后，系统保留上一版已通过的 travelPlan 分块，只接受针对错误字段的补丁；涉及日落或每日驾驶上限时，下一次调用必须改变对应 stop、leg 或日期，不能重复同一时间轴。连续修正应在可控耗时内完成，成功或失败原因都要对用户可见。
