@@ -258,6 +258,23 @@ describe("travel planning integration", () => {
           };
         }
 
+        if (callCount === 2) {
+          return {
+            message: {
+              role: "assistant",
+              content: "调用旅行行程工具。",
+              toolCalls: [
+                {
+                  id: "malformed-create-after-nudge",
+                  name: "create_trip",
+                  arguments: {},
+                  parseError: "模型返回的工具参数不是合法 JSON。",
+                },
+              ],
+            },
+          };
+        }
+
         return {
           message: {
             role: "assistant",
@@ -335,9 +352,13 @@ describe("travel planning integration", () => {
 
     expect(result.status).toBe("completed");
     expect(result.tripId).toBeTruthy();
-    expect(callCount).toBe(2);
+    expect(callCount).toBe(3);
     expect(toolChoices[0]).toBeUndefined();
     expect(toolChoices[1]).toEqual({
+      type: "function",
+      function: { name: "create_trip" },
+    });
+    expect(toolChoices[2]).toEqual({
       type: "function",
       function: { name: "create_trip" },
     });

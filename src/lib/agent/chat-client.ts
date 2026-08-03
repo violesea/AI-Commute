@@ -13,6 +13,7 @@ export type AgentChatToolCall = {
   id: string;
   name: string;
   arguments: Record<string, unknown>;
+  parseError?: string;
 };
 
 export type AgentChatMessage = {
@@ -55,12 +56,22 @@ export type AgentChatClient = {
 type EnvSource = Partial<Record<string, string | undefined>>;
 
 function parseToolArguments(value: string | null | undefined) {
-  if (!value) return {};
+  if (!value) return { arguments: {} };
 
-  const parsed = JSON.parse(value) as unknown;
-  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-    ? (parsed as Record<string, unknown>)
-    : {};
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? { arguments: parsed as Record<string, unknown> }
+      : {
+          arguments: {},
+          parseError: "模型返回的工具参数不是 JSON 对象。",
+        };
+  } catch {
+    return {
+      arguments: {},
+      parseError: "模型返回的工具参数不是合法 JSON。",
+    };
+  }
 }
 
 function toOpenAiMessages(messages: AgentChatMessage[]) {
@@ -142,7 +153,7 @@ export function createOpenAiChatClient(
           toolCalls: message.tool_calls?.map((toolCall) => ({
             id: toolCall.id,
             name: toolCall.function.name,
-            arguments: parseToolArguments(toolCall.function.arguments),
+            ...parseToolArguments(toolCall.function.arguments),
           })),
         },
       };

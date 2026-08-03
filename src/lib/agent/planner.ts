@@ -1654,6 +1654,23 @@ async function runConversationAttempt(input: {
 
     for (const toolCall of toolCalls) {
       assertAgentRunActive(input.signal);
+
+      if (toolCall.parseError) {
+        if (input.requireCreateTrip && toolCall.name === "create_trip") {
+          forceCreateTrip = true;
+        }
+
+        input.messages.push({
+          role: "tool",
+          toolCallId: toolCall.id,
+          content: JSON.stringify({
+            error:
+              "工具参数无法解析。请重新调用该工具，并输出完整、合法且不截断的 JSON 参数。",
+          }),
+        });
+        continue;
+      }
+
       const result = await executeToolCall(
         toolCall,
         input.context,
