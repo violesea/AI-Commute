@@ -31,7 +31,7 @@ export function createAmapClient(
     options.realClient ??
     createRealAmapClient({
       apiKey,
-      throttle: createAmapThrottle({ requestsPerSecond: 3 })
+      throttle: createAmapThrottle({ requestsPerSecond: 1 })
     });
 
   return realClient;
