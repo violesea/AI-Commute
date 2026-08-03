@@ -5,7 +5,7 @@ skills_used:
 model_used: GPT-5
 model_source: visible_runtime
 created_at: 2026-08-03T00:00:00+08:00
-updated_at: 2026-08-04T02:43:00+08:00
+updated_at: 2026-08-04T03:40:00+08:00
 updated_by: codex
 ---
 
@@ -40,3 +40,4 @@ updated_by: codex
 - 设置页模型选择与接入实测通过：可展开 GPT-4o mini、DeepSeek V4 Flash、DeepSeek V4 Pro，旅行固定 `deepseek-v4-flash`；旅行模型测试成功，耗时 1108ms。首次结构化 `create_trip` 被安全校验拒绝后第二次成功，新增 ISSUE-015 跟踪重试成本。
 - 旅行工具兼容 `D1`、`Day1`、`第1天` 等停靠点日程标记：这些值不再进入日期解析，服务端继续依据路线段和日程标记生成真实时间；旅行系统提示同步要求日期字段只传真实时间。
 - 第九次北京→锡林郭勒真实回归完成：5 个自然景点覆盖 5 类自然类型、2 个人文景点、4 个住宿、4 个美食、8 条避坑、9 段自驾、9 条路段天气风险和 11 个天气刷新任务落盘；推荐清单与实际路线 stops 不完全一致，登记 ISSUE-016。
+- 第十次北京→锡林郭勒真实回归完成：提交 `dcd47a4` 线上创建会话 `cmsdmnsxw0001qn0r85h4yinq` 和行程 `cmsdmqcgw001qqn0r0ov83bx0`；9 段自驾、4 类自然景观进入路线、1 个人文景点、4 个住宿、4 个美食、预算、8 条避坑、9 条路段天气风险和 11 个天气刷新任务均落盘。首次 `create_trip` 因缺少 `travelPlan.transport` 重试一次；推荐清单与实际 stops 的差异继续由 `ISSUE-016` 跟踪。
