@@ -5,7 +5,7 @@ skills_used:
 model_used: GPT-5
 model_source: visible_runtime
 created_at: 2026-08-03T00:00:00+08:00
-updated_at: 2026-08-04T04:25:37+08:00
+updated_at: 2026-08-04T05:24:39+08:00
 updated_by: codex
 ---
 
@@ -43,3 +43,4 @@ updated_by: codex
 - 第十次北京→锡林郭勒真实回归完成：提交 `dcd47a4` 线上创建会话 `cmsdmnsxw0001qn0r85h4yinq` 和行程 `cmsdmqcgw001qqn0r0ov83bx0`；9 段自驾、4 类自然景观进入路线、1 个人文景点、4 个住宿、4 个美食、预算、8 条避坑、9 条路段天气风险和 11 个天气刷新任务均落盘。首次 `create_trip` 因缺少 `travelPlan.transport` 重试一次；推荐清单与实际 stops 的差异继续由 `ISSUE-016` 跟踪。
 - 修复 DeepSeek 将 `attractions`、`lodging`、`food`、`pitfalls` 放在 `travelPlan` 外时的兼容归并；嵌套数组优先，增加单元和旅行集成回归测试。
 - 第十一次北京→锡林郭勒真实回归未落盘：会话 `cmsdoazqt0001pp0sbmm0tpwi` 在 4 次 `create_trip` 后因模型未按白天驾驶安全线重排而失败；安全校验阻止了不安全路线，新增 `ISSUE-017`。
+- 第十二次北京→锡林郭勒真实回归完成：会话 `cmsdqayr50001ox0rh44o5c37`、行程 `cmsdqe4ol001mox0rq51epo1v` 完成；10 段自驾、D1-D5 300/175/125/170/300 分钟、4 类自然景观、2 个人文景点、住宿、美食、预算、避坑、10 条路段风险和 12 个天气刷新任务均落盘；发现第 4 天地图 stop 序列与路线分段起点不一致，登记 `ISSUE-018`。
