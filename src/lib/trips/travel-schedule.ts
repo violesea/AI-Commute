@@ -294,6 +294,95 @@ function totalLegMinutes(leg: PlannedTripLegInput) {
     : routeAndBufferMinutes;
 }
 
+function isExplicitScheduleSafe(
+  input: NormalizeTravelScheduleInput,
+  dateRange: TravelDateRange
+) {
+  if (
+    input.legs.some(
+      (leg) => !leg.latestDepartAt || !leg.targetArriveAt
+    )
+  ) {
+    return false;
+  }
+
+  let previousArrival: Date | undefined;
+
+  for (const leg of input.legs) {
+    const latestDepartAt = leg.latestDepartAt!;
+    const targetArriveAt = leg.targetArriveAt!;
+    const departureDate = formatInTimeZone(
+      latestDepartAt,
+      input.timezone || DEFAULT_TIME_ZONE,
+      "yyyy-MM-dd"
+    );
+    const arrivalDate = formatInTimeZone(
+      targetArriveAt,
+      input.timezone || DEFAULT_TIME_ZONE,
+      "yyyy-MM-dd"
+    );
+    const scheduledMinutes = Math.round(
+      (targetArriveAt.getTime() - latestDepartAt.getTime()) / 60_000
+    );
+
+    if (
+      targetArriveAt <= latestDepartAt ||
+      (previousArrival && latestDepartAt < previousArrival) ||
+      departureDate !== arrivalDate ||
+      departureDate < dateRange.startDate ||
+      departureDate > dateRange.endDate ||
+      scheduledMinutes < totalLegMinutes(leg)
+    ) {
+      return false;
+    }
+
+    previousArrival = targetArriveAt;
+  }
+
+  return true;
+}
+
+function normalizeExplicitTravelItinerarySchedule(
+  input: NormalizeTravelScheduleInput,
+  dateRange: TravelDateRange
+): NormalizeTravelScheduleResult | null {
+  if (!isExplicitScheduleSafe(input, dateRange)) {
+    return null;
+  }
+
+  const legs = input.legs.map((leg) => ({
+    ...leg,
+    routeTitle: normalizeScheduledText(leg.routeTitle),
+    routeRationale: normalizeScheduledText(leg.routeRationale),
+    segmentTitle: normalizeScheduledText(leg.segmentTitle),
+    segmentDetail: normalizeScheduledText(leg.segmentDetail),
+  }));
+  const destinationArrivals = new Map<number, Date>();
+
+  legs.forEach((leg, index) => {
+    const destinationIndex = findDestinationStopIndex(
+      input.stops,
+      leg,
+      Math.min(index + 1, input.stops.length - 1)
+    );
+    if (destinationIndex >= 0 && leg.targetArriveAt) {
+      destinationArrivals.set(destinationIndex, leg.targetArriveAt);
+    }
+  });
+
+  const stops = input.stops.map((stop, index) => {
+    const target = destinationArrivals.get(index);
+    return target ? { ...stop, targetArriveAt: target } : stop;
+  });
+
+  return {
+    targetArriveAt: legs.at(-1)?.targetArriveAt ?? input.targetArriveAt,
+    stops,
+    legs,
+    dateRange,
+  };
+}
+
 function stopMatches(
   stop: PlannedTripStopInput,
   name?: string,
@@ -334,6 +423,14 @@ export function normalizeTravelItinerarySchedule(
       stops: input.stops,
       legs: input.legs,
     };
+  }
+
+  const explicitSchedule = normalizeExplicitTravelItinerarySchedule(
+    input,
+    dateRange
+  );
+  if (explicitSchedule) {
+    return explicitSchedule;
   }
 
   const promptStartClock = parsePromptStartClock(input.prompt);
@@ -510,6 +607,80 @@ function isDrivingLeg(leg: PlannedTripLegInput) {
       .filter(Boolean)
       .join(" ")
   );
+}
+
+export function ensureTravelPlanRouteRiskCoverage(
+  plan: TravelPlan,
+  legs: PlannedTripLegInput[],
+  timezone: string,
+  prompt?: string
+): TravelPlan {
+  const drivingLegs = legs.flatMap((leg, index) =>
+    isDrivingLeg(leg) ? [{ leg, order: index + 1 }] : []
+  );
+  if (drivingLegs.length === 0) {
+    return plan;
+  }
+
+  const existingRisks = plan.weather.routeRisks ?? [];
+  const existingOrders = new Set(
+    existingRisks
+      .map((risk) => risk.legOrder)
+      .filter((order): order is number => order !== undefined)
+  );
+  const dateRange = prompt ? parseTravelDateRange(prompt) : undefined;
+  const generatedRisks = drivingLegs.flatMap(({ leg, order }) => {
+    if (existingOrders.has(order)) {
+      return [];
+    }
+
+    const date = leg.latestDepartAt
+      ? formatInTimeZone(
+          leg.latestDepartAt,
+          timezone || DEFAULT_TIME_ZONE,
+          "yyyy-MM-dd"
+        )
+      : undefined;
+    const day =
+      date && dateRange
+        ? calendarDayDifference(dateRange.startDate, date) + 1
+        : undefined;
+    const route =
+      [leg.originName, leg.destinationName].filter(Boolean).join("→") ||
+      leg.routeTitle ||
+      leg.segmentTitle ||
+      `第 ${order} 段自驾`;
+
+    return [
+      {
+        legOrder: order,
+        day,
+        date,
+        route,
+        summary:
+          "该路段未返回独立天气风险，按未知风险处理；当前预报和路况不能覆盖此路段。",
+        risk: "medium" as const,
+        drivingAdvice:
+          "出发前 1 小时刷新天气、路况和道路通行状态，完成刷新前不要按当前路线出发。",
+        action:
+          "按未知风险保守执行；若出现降雨、大风、低能见度或道路管制，延后、改道或取消该段。",
+      },
+    ];
+  });
+
+  if (generatedRisks.length === 0) {
+    return plan;
+  }
+
+  return {
+    ...plan,
+    weather: {
+      ...plan.weather,
+      routeRisks: [...existingRisks, ...generatedRisks].sort(
+        (left, right) => (left.legOrder ?? Number.MAX_SAFE_INTEGER) - (right.legOrder ?? Number.MAX_SAFE_INTEGER)
+      ),
+    },
+  };
 }
 
 export type DailyDrivingLimitViolation = {

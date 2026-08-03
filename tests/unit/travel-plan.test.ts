@@ -6,6 +6,7 @@ import {
   normalizeTravelPlan,
   parseTravelPlanJson,
 } from "@/lib/trips/travel-plan";
+import { ensureTravelPlanRouteRiskCoverage } from "@/lib/trips/travel-schedule";
 
 const sampleTravelPlan = {
   destination: "宁波",
@@ -287,6 +288,60 @@ describe("travel plan normalization", () => {
         }),
       ])
     );
+  });
+
+  it("fills missing route risks conservatively for short self-drive legs", () => {
+    const plan = normalizeTravelPlan(sampleTravelPlan);
+    const covered = ensureTravelPlanRouteRiskCoverage(
+      plan,
+      [
+        {
+          order: 0,
+          originName: "北京",
+          destinationName: "景点一",
+          routeMinutes: 120,
+          mode: "driving",
+          latestDepartAt: new Date("2026-08-08T00:00:00.000Z"),
+          targetArriveAt: new Date("2026-08-08T02:00:00.000Z"),
+        },
+        {
+          order: 1,
+          originName: "景点一",
+          destinationName: "景点二",
+          routeMinutes: 20,
+          mode: "driving",
+          latestDepartAt: new Date("2026-08-08T03:00:00.000Z"),
+          targetArriveAt: new Date("2026-08-08T03:20:00.000Z"),
+        },
+        {
+          order: 2,
+          originName: "景点二",
+          destinationName: "酒店",
+          routeMinutes: 10,
+          mode: "transit",
+          latestDepartAt: new Date("2026-08-08T04:00:00.000Z"),
+          targetArriveAt: new Date("2026-08-08T04:10:00.000Z"),
+        },
+      ],
+      "Asia/Shanghai",
+      "请规划2026年8月8日至9日北京出发的自驾旅行"
+    );
+
+    expect(covered.weather.routeRisks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ legOrder: 1, risk: "low" }),
+        expect.objectContaining({
+          legOrder: 2,
+          date: "2026-08-08",
+          risk: "medium",
+          summary: expect.stringContaining("未知风险"),
+          action: expect.stringContaining("延后、改道或取消"),
+        }),
+      ])
+    );
+    expect(
+      covered.weather.routeRisks?.some((risk) => risk.legOrder === 3)
+    ).toBe(false);
   });
 
   it("rejects incomplete plans and safely hides invalid persisted JSON", () => {

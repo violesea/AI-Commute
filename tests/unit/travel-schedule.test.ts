@@ -184,6 +184,66 @@ describe("travel itinerary schedule", () => {
     expect(localTime(result.targetArriveAt)).toBe("2026-08-11 17:30");
   });
 
+  it("keeps a complete explicit daytime schedule when its dates are safe", () => {
+    const result = normalizeTravelItinerarySchedule({
+      prompt: "请规划2026年8月8日至12日北京出发的锡林郭勒自驾旅行",
+      timezone: "Asia/Shanghai",
+      stops: [
+        { order: 0, name: "北京", kind: "origin", plannedStayMin: 0 },
+        { order: 1, name: "石条山", kind: "natural", plannedStayMin: 90 },
+        { order: 2, name: "宝昌镇", kind: "lodging", plannedStayMin: 300 },
+        { order: 3, name: "元上都遗址", kind: "cultural", plannedStayMin: 120 },
+      ],
+      legs: [
+        {
+          order: 0,
+          originName: "北京",
+          destinationName: "石条山",
+          routeMinutes: 240,
+          bufferMinutes: 30,
+          totalMinutes: 270,
+          latestDepartAt: new Date("2026-08-08T23:00:00.000Z"),
+          targetArriveAt: new Date("2026-08-09T03:30:00.000Z"),
+          mode: "driving",
+          segmentTitle: "出京高速段",
+        },
+        {
+          order: 1,
+          originName: "石条山",
+          destinationName: "宝昌镇",
+          routeMinutes: 15,
+          bufferMinutes: 5,
+          totalMinutes: 20,
+          latestDepartAt: new Date("2026-08-09T05:00:00.000Z"),
+          targetArriveAt: new Date("2026-08-09T05:20:00.000Z"),
+          mode: "driving",
+          segmentTitle: "乡镇短驳",
+        },
+        {
+          order: 2,
+          originName: "宝昌镇",
+          destinationName: "元上都遗址",
+          routeMinutes: 90,
+          bufferMinutes: 15,
+          totalMinutes: 105,
+          latestDepartAt: new Date("2026-08-09T23:00:00.000Z"),
+          targetArriveAt: new Date("2026-08-10T00:45:00.000Z"),
+          mode: "driving",
+          segmentTitle: "G207国道段",
+        },
+      ],
+    });
+
+    expect(result.legs.map((leg) => [
+      localTime(leg.latestDepartAt),
+      localTime(leg.targetArriveAt),
+    ])).toEqual([
+      ["2026-08-09 07:00", "2026-08-09 11:30"],
+      ["2026-08-09 13:00", "2026-08-09 13:20"],
+      ["2026-08-10 07:00", "2026-08-10 08:45"],
+    ]);
+  });
+
   it("recognizes English Day markers when grouping route legs by calendar day", () => {
     const result = normalizeTravelItinerarySchedule({
       prompt: "请规划2026-08-08至2026-08-12北京出发的自驾旅行",
