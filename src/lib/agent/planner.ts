@@ -60,6 +60,7 @@ import {
   addTravelSchedulePitfall,
   assertTravelItinerarySchedule,
   ensureTravelPlanRouteRiskCoverage,
+  isTravelDayMarker,
   normalizeTravelItinerarySchedule,
   parseDateTimeInTimeZone,
   parseTravelDateRange,
@@ -932,7 +933,7 @@ Self-driving is a time-varying process. Before calling get_transit_route, get_dr
 Natural scenery is a hard output requirement, not an optional extra. Call search_natural_attractions once before selecting attractions. It searches multiple nature categories for you. Recommend at least three distinct natural candidates for a one-to-three-day trip, at least four for a trip of four days or longer, and at least one cultural candidate. Cover different natural types when the destination supports them, such as mountain, lake, forest, wetland, coast, island, canyon, waterfall, park, or viewpoint, and set naturalType for every natural candidate. The application rejects a travel plan that has too few natural candidates or too little type diversity, so do not stop after finding one scenic spot. Use the evidence returned by tools; do not invent venue-specific facts.
 Search POIs before naming specific lodging or food venues. Explain the reason for every attraction, its best visiting time, suggested stay, and weather note. Add an evidence object to every attraction, lodging, and food recommendation: use source amap_poi only when it comes from a POI search, otherwise use agent_inference; mark prices, opening times, availability, and AI-only suggestions as needs_verification. Search practical lodging areas and local food options. Add at least three concrete pitfalls covering tickets/reservations, peak periods, parking or transit, weather, road conditions, and other destination-specific friction when relevant. The budget is mandatory: provide a total range and a breakdown for lodging, food, fuel/charging, tolls, tickets and other meaningful costs; mark uncertain prices as pending verification and state the assumptions such as party size and vehicle type.
 For a normal one-to-three-day request, keep evidence bounded but sufficient: make one initial weather call, one broad natural-attraction search, at most ten representative attraction or practical-place keyword searches plus one lodging and one food keyword, and call each main driving/transit comparison at most once. For trips of four days or longer, use one broad natural-attraction search, at most eight additional POI keyword searches, one practical lodging search, one food search, and one route call per unique itinerary leg; reuse coordinates and equivalent results already returned instead of searching again. Once you have the weather forecast, enough natural candidates, a cultural candidate, lodging, food, and both transport options, stop searching and immediately call create_trip. Do not search every possible option or repeat an equivalent route call. Keep create_trip arguments compact: use at most six natural attractions, three cultural attractions, four lodging suggestions, four food suggestions, and eight pitfalls; keep narrative fields concise, avoid repeating the same route or weather fact, provide exactly one route risk per self-drive leg, and never copy raw provider payloads into tool arguments.
-The create_trip call is mandatory. In travel mode it must include a complete travelPlan object with destination, summary, weather including forecast and routeRisks, transport.driving, transport.transit, budget, attractions, lodging, food, and pitfalls. Stops and legs must form a chronological itinerary; every leg must include explicit latestDepartAt and targetArriveAt in the requested date range, with no cross-midnight driving. If you provide explicit leg times, keep them consistent and chronological; otherwise use D1/Day1/第1天 markers so the server can safely group legs by calendar day. Use stop notes for day/order context and route rationale for transport decisions. Every travel leg gets a weather refresh task one hour before departure; the first leg also gets 72-hour and 24-hour refresh tasks. During a later route recheck, call get_weather_reference again before deciding. If weather, traffic, or road conditions change, update the route and pass the refreshed travelPlan to update_trip_summary or replace_trip_stops/replace_trip_legs so the visible plan stays consistent. If the server rejects a create or replacement because a daylight-driving leg arrives after the local sunset safety line or because the total driving minutes on a day exceed the user's explicit daily ceiling, do not repeat the same times: choose early return, add an intermediate overnight stop and split the leg, or shorten/remove the remote attraction, then call the route tool again.
+The create_trip call is mandatory. In travel mode it must include a complete travelPlan object with destination, summary, weather including forecast and routeRisks, transport.driving, transport.transit, budget, attractions, lodging, food, and pitfalls. Stops and legs must form a chronological itinerary; every leg must include explicit latestDepartAt and targetArriveAt in the requested date range, with no cross-midnight driving. If you provide explicit leg times, keep them consistent and chronological; otherwise use D1/Day1/第1天 markers in segmentTitle, routeTitle, routeRationale, or stop notes so the server can safely group legs by calendar day. Never put a day marker such as D1, Day1, or 第1天 into a date field such as latestDepartAt, targetArriveAt, or a stop targetArriveAt. Use stop notes for day/order context and route rationale for transport decisions. Every travel leg gets a weather refresh task one hour before departure; the first leg also gets 72-hour and 24-hour refresh tasks. During a later route recheck, call get_weather_reference again before deciding. If weather, traffic, or road conditions change, update the route and pass the refreshed travelPlan to update_trip_summary or replace_trip_stops/replace_trip_legs so the visible plan stays consistent. If the server rejects a create or replacement because a daylight-driving leg arrives after the local sunset safety line or because the total driving minutes on a day exceed the user's explicit daily ceiling, do not repeat the same times: choose early return, add an intermediate overnight stop and split the leg, or shorten/remove the remote attraction, then call the route tool again.
 Final user-facing replies must be plain text without Markdown formatting, headings, code ticks, or list markers.`;
 
 function getSystemPrompt(purpose: AgentPlanningPurpose) {
@@ -1106,10 +1107,15 @@ function readNumber(value: Record<string, unknown>, key: string) {
 function readOptionalDate(
   value: Record<string, unknown>,
   key: string,
-  timezone?: string
+  timezone?: string,
+  options: { allowDayMarker?: boolean } = {}
 ) {
   const raw = value[key];
   if (typeof raw !== "string" || !raw.trim()) {
+    return undefined;
+  }
+
+  if (options.allowDayMarker && isTravelDayMarker(raw)) {
     return undefined;
   }
 
@@ -1316,7 +1322,9 @@ function normalizeStop(value: unknown, timezone?: string): PlannedTripStopInput 
     name: readString(stop, "name"),
     address: readOptionalString(stop, "address"),
     lngLat: readOptionalString(stop, "lngLat"),
-    targetArriveAt: readOptionalDate(stop, "targetArriveAt", timezone),
+    targetArriveAt: readOptionalDate(stop, "targetArriveAt", timezone, {
+      allowDayMarker: true,
+    }),
     plannedStayMin: readOptionalNumber(stop, "plannedStayMin"),
     kind: readOptionalString(stop, "kind"),
     notes: readOptionalString(stop, "notes"),
@@ -1337,8 +1345,12 @@ function normalizeLeg(value: unknown, timezone?: string): PlannedTripLegInput {
     bufferComponents: readArray(leg, "bufferComponents").map(
       normalizeBufferComponent
     ),
-    latestDepartAt: readOptionalDate(leg, "latestDepartAt", timezone),
-    targetArriveAt: readOptionalDate(leg, "targetArriveAt", timezone),
+    latestDepartAt: readOptionalDate(leg, "latestDepartAt", timezone, {
+      allowDayMarker: true,
+    }),
+    targetArriveAt: readOptionalDate(leg, "targetArriveAt", timezone, {
+      allowDayMarker: true,
+    }),
     mode: readOptionalString(leg, "mode"),
     routeTitle: readOptionalString(leg, "routeTitle"),
     routeRationale: readOptionalString(leg, "routeRationale"),
@@ -1395,7 +1407,8 @@ async function normalizeCreateTripInput(
   const initialTargetArriveAt = readOptionalDate(
     args,
     "targetArriveAt",
-    timezone
+    timezone,
+    { allowDayMarker: context.purpose === "travel" }
   );
   const schedule =
     context.purpose === "travel" && travelPlan
@@ -1592,7 +1605,9 @@ async function normalizeReplaceRouteInput(
   }
 
   const initialTargetArriveAt =
-    readOptionalDate(args, "targetArriveAt", timezone) ??
+    readOptionalDate(args, "targetArriveAt", timezone, {
+      allowDayMarker: context.purpose === "travel",
+    }) ??
     current.trip.targetArriveAt ??
     undefined;
   const schedule =
@@ -1907,7 +1922,8 @@ async function executeToolCall(
       targetArriveAt: readOptionalDate(
         args,
         "targetArriveAt",
-        settings.timezone
+        settings.timezone,
+        { allowDayMarker: context.purpose === "travel" }
       ),
       status: readOptionalString(args, "status"),
       travelPlan,

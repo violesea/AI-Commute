@@ -247,6 +247,16 @@ function addMinutes(date: Date, minutes: number) {
   return new Date(date.getTime() + Math.max(0, minutes) * 60_000);
 }
 
+export function isTravelDayMarker(value?: string) {
+  const normalized = value?.trim();
+  if (!normalized) return false;
+
+  return (
+    /^(?:D|Day)\s*\d{1,2}$/i.test(normalized) ||
+    /^第\s*\d{1,2}\s*天$/.test(normalized)
+  );
+}
+
 function readDayMarker(value?: string) {
   if (!value) return undefined;
 

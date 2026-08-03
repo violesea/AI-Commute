@@ -3,6 +3,7 @@ import { formatInTimeZone } from "date-fns-tz";
 import {
   assertTravelItinerarySchedule,
   findDailyDrivingLimitViolation,
+  isTravelDayMarker,
   normalizeTravelItinerarySchedule,
   parseDateTimeInTimeZone,
   parseDailyDrivingLimitMinutes,
@@ -16,6 +17,14 @@ function localTime(date: Date | undefined) {
 }
 
 describe("travel itinerary schedule", () => {
+  it("recognizes standalone day markers used as itinerary metadata", () => {
+    expect(isTravelDayMarker("D1")).toBe(true);
+    expect(isTravelDayMarker("Day 2")).toBe(true);
+    expect(isTravelDayMarker("第 3 天")).toBe(true);
+    expect(isTravelDayMarker("2026-08-08T07:00:00+08:00")).toBe(false);
+    expect(isTravelDayMarker("D1·去程")).toBe(false);
+  });
+
   it("parses a Chinese date range with an omitted end month", () => {
     expect(parseTravelDateRange("请规划2026年8月8日至11日北京出发的旅行")).toEqual({
       startDate: "2026-08-08",
