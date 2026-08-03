@@ -15,6 +15,8 @@ export type TravelRecommendationVerification =
   | "provider_reference"
   | "needs_verification";
 
+export type TravelAttractionRouteStatus = "planned" | "alternative";
+
 export type TravelRecommendationEvidence = {
   source: TravelRecommendationSource;
   status: TravelRecommendationVerification;
@@ -76,6 +78,7 @@ export type TravelAttraction = {
   name: string;
   category: TravelAttractionCategory;
   reason: string;
+  routeStatus?: TravelAttractionRouteStatus;
   naturalType?: string;
   address?: string;
   lngLat?: string;
@@ -136,6 +139,35 @@ export type TravelPlan = {
   lodging: TravelLodging[];
   food: TravelFood[];
   pitfalls: TravelPitfall[];
+};
+
+export type TravelPlanRouteStop = {
+  name: string;
+  order?: number | null;
+  address?: string | null;
+  lngLat?: string | null;
+  kind?: string | null;
+  notes?: string | null;
+};
+
+export type TravelPlanRouteLeg = {
+  order?: number | null;
+  originName?: string | null;
+  originLngLat?: string | null;
+  destinationName?: string | null;
+  destinationLngLat?: string | null;
+  routeMinutes?: number | null;
+  mode?: string | null;
+};
+
+export type TravelTransportRouteEvidence = {
+  durationMinutes: number;
+  summary: string;
+};
+
+export type TravelTransportEvidence = {
+  driving: TravelTransportRouteEvidence;
+  transit: TravelTransportRouteEvidence;
 };
 
 export type TravelRouteStatLeg = {
@@ -247,6 +279,10 @@ function readRecord(value: unknown, label: string): Record<string, unknown> {
   }
 
   return value as Record<string, unknown>;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function readJsonRecord(value: unknown, label: string): Record<string, unknown> {
@@ -478,6 +514,10 @@ function normalizeAttraction(value: unknown): TravelAttraction {
     name: readText(record, "name", "travelPlan.attractions[]")!,
     category: normalizedCategory,
     reason: readText(record, "reason", "travelPlan.attractions[]")!,
+    routeStatus:
+      record.routeStatus === "planned" || record.routeStatus === "alternative"
+        ? record.routeStatus
+        : undefined,
     naturalType: readText(
       record,
       "naturalType",
@@ -694,6 +734,190 @@ export function normalizeTravelPlan(value: unknown): TravelPlan {
     lodging: readArray(record, "lodging", "travelPlan").map(normalizeLodging),
     food: readArray(record, "food", "travelPlan").map(normalizeFood),
     pitfalls: readArray(record, "pitfalls", "travelPlan").map(normalizePitfall),
+  };
+}
+
+function normalizePlaceName(value?: string | null) {
+  return (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s（）()【】［］[\]·•,，。:：/\\_\-—]/g, "");
+}
+
+function samePlace(left?: string | null, right?: string | null) {
+  const normalizedLeft = normalizePlaceName(left);
+  const normalizedRight = normalizePlaceName(right);
+  if (!normalizedLeft || !normalizedRight) return false;
+  if (normalizedLeft === normalizedRight) return true;
+
+  const shorterLength = Math.min(
+    normalizedLeft.length,
+    normalizedRight.length
+  );
+  return (
+    shorterLength >= 3 &&
+    (normalizedLeft.includes(normalizedRight) ||
+      normalizedRight.includes(normalizedLeft))
+  );
+}
+
+function sameLngLat(left?: string | null, right?: string | null) {
+  return Boolean(
+    left &&
+      right &&
+      left
+        .split(",")
+        .map((part) => part.trim())
+        .join(",") ===
+        right
+          .split(",")
+          .map((part) => part.trim())
+          .join(",")
+  );
+}
+
+function isGenericRouteStop(stop: TravelPlanRouteStop) {
+  const text = [stop.name, stop.address, stop.kind, stop.notes]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    /origin|start|出发|起点/i.test(stop.kind ?? "") ||
+    /lodging|hotel|accommodation|住宿|酒店|宾馆|民宿|客栈/i.test(text) ||
+    /市区|城区|市中心|县城|区域|镇区|服务区|机场|车站|高铁|收费站/i.test(
+      text
+    )
+  );
+}
+
+function hasUsableRouteLeg(leg: TravelPlanRouteLeg) {
+  const routeMinutes = Number(leg.routeMinutes);
+  return Number.isFinite(routeMinutes) && routeMinutes > 0;
+}
+
+function hasRouteForStop(
+  stop: TravelPlanRouteStop,
+  stopIndex: number,
+  legs: readonly TravelPlanRouteLeg[]
+) {
+  const explicitEndpoints = legs.some(
+    (leg) =>
+      Boolean(leg.originName || leg.originLngLat) ||
+      Boolean(leg.destinationName || leg.destinationLngLat)
+  );
+
+  return legs.some((leg, legIndex) => {
+    if (!hasUsableRouteLeg(leg)) return false;
+    if (!explicitEndpoints) {
+      return legIndex === stopIndex - 1 || legIndex === stopIndex;
+    }
+
+    return (
+      samePlace(stop.name, leg.originName) ||
+      samePlace(stop.name, leg.destinationName) ||
+      sameLngLat(stop.lngLat, leg.originLngLat) ||
+      sameLngLat(stop.lngLat, leg.destinationLngLat)
+    );
+  });
+}
+
+function isPlannedAttraction(
+  attraction: TravelAttraction,
+  stops: readonly TravelPlanRouteStop[],
+  legs: readonly TravelPlanRouteLeg[]
+) {
+  return stops.some(
+    (stop, stopIndex) =>
+      !isGenericRouteStop(stop) &&
+      (samePlace(attraction.name, stop.name) ||
+        sameLngLat(attraction.lngLat, stop.lngLat)) &&
+      hasRouteForStop(stop, stopIndex, legs)
+  );
+}
+
+export function alignTravelPlanAttractionsWithRoute(
+  plan: TravelPlan,
+  stops: readonly TravelPlanRouteStop[],
+  legs: readonly TravelPlanRouteLeg[]
+): TravelPlan {
+  return {
+    ...plan,
+    attractions: plan.attractions.map((attraction) => ({
+      ...attraction,
+      routeStatus: isPlannedAttraction(attraction, stops, legs)
+        ? "planned"
+        : "alternative",
+    })),
+  };
+}
+
+function readPayloadOption(value: unknown) {
+  return isRecord(value) ? value : {};
+}
+
+function optionFallback(
+  currentValue: unknown,
+  evidence: TravelTransportRouteEvidence,
+  label: string
+) {
+  const current = readPayloadOption(currentValue);
+  return {
+    ...current,
+    summary:
+      typeof current.summary === "string" && current.summary.trim()
+        ? current.summary
+        : `${label}约 ${evidence.durationMinutes} 分钟`,
+    reason:
+      typeof current.reason === "string" && current.reason.trim()
+        ? current.reason
+        : "根据本次会话已查询的路线结果填写，出发前需重新刷新。",
+    durationMinutes: evidence.durationMinutes,
+    route:
+      typeof current.route === "string" && current.route.trim()
+        ? current.route
+        : evidence.summary,
+  };
+}
+
+export function completeTravelPlanTransportPayload(
+  value: unknown,
+  evidence: TravelTransportEvidence
+) {
+  if (!evidence.driving || !evidence.transit) {
+    throw new Error(
+      "无法自动补全 travelPlan.transport：当前会话缺少自驾和公共交通两种已查询路线证据。"
+    );
+  }
+
+  const plan = readRecord(value, "travelPlan");
+  const currentTransport = readPayloadOption(plan.transport);
+  const driving = optionFallback(
+    currentTransport.driving,
+    evidence.driving,
+    "自驾"
+  );
+  const transit = optionFallback(
+    currentTransport.transit,
+    evidence.transit,
+    "公共交通"
+  );
+  const recommended =
+    evidence.driving.durationMinutes <= evidence.transit.durationMinutes
+      ? "driving"
+      : "transit";
+
+  return {
+    ...plan,
+    transport: {
+      ...currentTransport,
+      recommended,
+      reason:
+        typeof currentTransport.reason === "string" &&
+        currentTransport.reason.trim()
+          ? currentTransport.reason
+          : `已比较已查询路线：自驾约 ${evidence.driving.durationMinutes} 分钟，公共交通约 ${evidence.transit.durationMinutes} 分钟。`,
+      driving,
+      transit,
+    },
   };
 }
 

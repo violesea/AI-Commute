@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  alignTravelPlanAttractionsWithRoute,
   assertTravelPlanAttractionCoverage,
   assertTravelPlanOperationalCompleteness,
+  completeTravelPlanTransportPayload,
   ensureTravelPlanWeatherCoverage,
   getTravelRouteStats,
   normalizeTravelPlan,
@@ -116,6 +118,73 @@ const sampleTravelPlan = {
 };
 
 describe("travel plan normalization", () => {
+  it("marks only concrete attraction stops with route legs as planned", () => {
+    const plan = normalizeTravelPlan(sampleTravelPlan);
+    const aligned = alignTravelPlanAttractionsWithRoute(
+      plan,
+      [
+        { order: 0, name: "北京", kind: "origin" },
+        { order: 1, name: "东钱湖", kind: "destination" },
+        { order: 2, name: "宁波市区（天一阁区域）", kind: "destination" },
+      ],
+      [
+        {
+          order: 0,
+          originName: "北京",
+          destinationName: "东钱湖",
+          routeMinutes: 120,
+          mode: "driving",
+        },
+        {
+          order: 1,
+          originName: "东钱湖",
+          destinationName: "宁波市区（天一阁区域）",
+          routeMinutes: 30,
+          mode: "driving",
+        },
+      ]
+    );
+
+    expect(
+      aligned.attractions.find((attraction) => attraction.name === "东钱湖")
+    ).toMatchObject({ routeStatus: "planned" });
+    expect(
+      aligned.attractions.find((attraction) => attraction.name === "天一阁")
+    ).toMatchObject({ routeStatus: "alternative" });
+    expect(
+      aligned.attractions
+        .filter((attraction) => attraction.routeStatus === "planned")
+        .map((attraction) => attraction.name)
+    ).toEqual(["东钱湖"]);
+  });
+
+  it("fills missing transport fields only from both queried route results", () => {
+    const incomplete = {
+      ...sampleTravelPlan,
+      transport: {
+        driving: {},
+        transit: { summary: "公共交通结果" },
+      },
+    };
+    const completed = completeTravelPlanTransportPayload(incomplete, {
+      driving: { durationMinutes: 36, summary: "驾车路线：北京到东钱湖" },
+      transit: { durationMinutes: 58, summary: "公交路线：北京到东钱湖" },
+    });
+    const normalized = normalizeTravelPlan(completed);
+
+    expect(normalized.transport).toMatchObject({
+      recommended: "driving",
+      driving: {
+        durationMinutes: 36,
+        route: "驾车路线：北京到东钱湖",
+      },
+      transit: {
+        durationMinutes: 58,
+        route: "公交路线：北京到东钱湖",
+      },
+    });
+  });
+
   it("uses structured route legs as the canonical driving statistics", () => {
     expect(
       getTravelRouteStats(

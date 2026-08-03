@@ -135,6 +135,108 @@ describe("travel planning integration", () => {
     expect(Buffer.byteLength(serialized)).toBeLessThan(1_000);
   });
 
+  it("completes a partial transport block from both recorded route results", async () => {
+    const user = await prisma.user.create({
+      data: {
+        email: `travel-transport-fallback-${Date.now()}@example.com`,
+        name: "交通字段补全用户",
+        passwordHash: "hash",
+        settings: {
+          create: {
+            defaultCity: "北京",
+            timezone: "Asia/Shanghai",
+            originName: "北京",
+            originLngLat: "116.4,39.9",
+            routePreference: "balanced",
+          },
+        },
+      },
+    });
+    const session = await startPlanningSession({
+      userId: user.id,
+      purpose: "travel",
+      prompt: "请规划 2026 年 8 月 8 日北京到锡林郭勒的一日自驾旅行。",
+    });
+    const chatClient: AgentChatClient = {
+      async complete() {
+        return {
+          message: {
+            role: "assistant",
+            content: "已查询两种交通方案并落地行程。",
+            toolCalls: [
+              {
+                id: "transport-fallback-driving",
+                name: "get_driving_route",
+                arguments: {
+                  origin: "116.4,39.9",
+                  destination: "116.5,42.0",
+                  city: "北京",
+                  cityd: "锡林郭勒",
+                },
+              },
+              {
+                id: "transport-fallback-transit",
+                name: "get_transit_route",
+                arguments: {
+                  origin: "116.4,39.9",
+                  destination: "116.5,42.0",
+                  city: "北京",
+                  cityd: "锡林郭勒",
+                },
+              },
+              {
+                id: "transport-fallback-create",
+                name: "create_trip",
+                arguments: {
+                  title: "北京到锡林郭勒",
+                  timezone: "Asia/Shanghai",
+                  finalStopName: "锡林郭勒",
+                  stops: [
+                    { order: 0, name: "北京", kind: "origin" },
+                    { order: 1, name: "锡林郭勒", kind: "destination" },
+                  ],
+                  legs: [
+                    {
+                      order: 0,
+                      originName: "北京",
+                      destinationName: "锡林郭勒",
+                      routeMinutes: 36,
+                      totalMinutes: 36,
+                      bufferComponents: [],
+                      mode: "driving",
+                      segmentTitle: "D1·去程",
+                    },
+                  ],
+                  travelPlan: {
+                    ...travelPlan,
+                    transport: {},
+                  },
+                },
+              },
+            ],
+          },
+        };
+      },
+    };
+
+    const result = await runPlanningSession(session.id, {
+      amapClient: createMockAmapClient(),
+      chatClient,
+    });
+
+    expect(result.status).toBe("completed");
+    const persisted = await prisma.trip.findUniqueOrThrow({
+      where: { id: result.tripId! },
+    });
+    expect(JSON.parse(persisted.travelPlanJson ?? "{}")).toMatchObject({
+      transport: {
+        recommended: "driving",
+        driving: { durationMinutes: 36 },
+        transit: { durationMinutes: 42 },
+      },
+    });
+  });
+
   it("nudges the model to converge after the direct POI budget is exhausted", async () => {
     const user = await prisma.user.create({
       data: {

@@ -511,11 +511,13 @@ describe("sample-aligned UI components", () => {
               name: "东钱湖",
               category: "natural",
               reason: "自然景观",
+              routeStatus: "planned",
             },
             {
               name: "天一阁",
               category: "cultural",
               reason: "历史人文",
+              routeStatus: "alternative",
             },
           ],
           lodging: [
@@ -568,6 +570,9 @@ describe("sample-aligned UI components", () => {
     expect(html).toContain("公共交通方案");
     expect(html).toContain("自然景观");
     expect(html).toContain("人文历史");
+    expect(html).toContain("本次路线已安排 1 个景点，备选 / 顺路可选 1 个景点");
+    expect(html).toContain("已安排进路线");
+    expect(html).toContain("备选 / 顺路可选");
     expect(html).toContain("住宿建议");
     expect(html).toContain("美食建议");
     expect(html).toContain("避坑提醒");

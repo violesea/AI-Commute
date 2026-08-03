@@ -33,6 +33,7 @@ import {
 import { buildMapPath } from "@/lib/trips/map-path";
 import { toPublicTripShareData } from "@/lib/trips/share-view";
 import {
+  alignTravelPlanAttractionsWithRoute,
   getTravelRouteStats,
   parseTravelPlanJson,
 } from "@/lib/trips/travel-plan";
@@ -238,7 +239,35 @@ export default async function TripDetailPage({
       : selectedCandidates[0]?.title;
   const mapPath = buildMapPath(primaryLeg?.originName, trip.stops);
   const publicTrip = toPublicTripShareData(trip);
-  const travelPlan = parseTravelPlanJson(trip.travelPlanJson);
+  const parsedTravelPlan = parseTravelPlanJson(trip.travelPlanJson);
+  const travelPlan = parsedTravelPlan
+    ? alignTravelPlanAttractionsWithRoute(
+        parsedTravelPlan,
+        trip.stops.map((stop) => ({
+          order: stop.order,
+          name: stop.name,
+          address: stop.address,
+          lngLat: stop.lngLat,
+          kind: stop.kind,
+          notes: stop.notes,
+        })),
+        trip.legs.map((leg) => {
+          const candidate =
+            leg.selectedCandidate ??
+            leg.routeCandidates.find((routeCandidate) => routeCandidate.selected) ??
+            leg.routeCandidates[0];
+          return {
+            order: leg.order,
+            originName: leg.originName,
+            originLngLat: leg.originLngLat,
+            destinationName: leg.destinationName,
+            destinationLngLat: leg.destinationLngLat,
+            routeMinutes: candidate?.routeMinutes,
+            mode: candidate?.mode,
+          };
+        })
+      )
+    : null;
 
   return (
     <AppShell active="history">

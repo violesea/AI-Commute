@@ -46,14 +46,17 @@ import type {
   PlannedTripStopInput,
 } from "@/lib/trips/types";
 import {
+  alignTravelPlanAttractionsWithRoute,
   assertTravelPlanAttractionCoverage,
   assertTravelPlanBudget,
   assertTravelPlanOperationalCompleteness,
+  completeTravelPlanTransportPayload,
   ensureTravelPlanWeatherCoverage,
   normalizeTravelPlan,
   parseTravelPlanJson,
   type TravelPlan,
   type TravelRecommendationEvidence,
+  type TravelTransportEvidence,
   type TravelWeatherForecast,
 } from "@/lib/trips/travel-plan";
 import {
@@ -1378,6 +1381,92 @@ function getTravelDrivingLegOrders(legs: PlannedTripLegInput[]) {
   }, []);
 }
 
+function isTravelTransportValidationError(error: unknown) {
+  return (
+    error instanceof Error && error.message.includes("travelPlan.transport")
+  );
+}
+
+function parseTravelTransportRouteEvidence(
+  responseJson: string | null,
+  label: "driving" | "transit"
+) {
+  if (!responseJson) return undefined;
+
+  try {
+    const response = JSON.parse(responseJson) as Record<string, unknown>;
+    const durationMinutes = Number(response.durationMinutes);
+    const summary =
+      typeof response.summary === "string" ? response.summary.trim() : "";
+    if (!Number.isFinite(durationMinutes) || durationMinutes <= 0 || !summary) {
+      return undefined;
+    }
+
+    return {
+      durationMinutes: Math.round(durationMinutes),
+      summary,
+      label,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function loadTravelTransportEvidence(sessionId: string) {
+  const calls = await prisma.agentToolCall.findMany({
+    where: {
+      agentSessionId: sessionId,
+      name: { in: ["get_driving_route", "get_transit_route"] },
+      status: "completed",
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  let driving;
+  let transit;
+
+  for (const call of calls) {
+    if (!driving && call.name === "get_driving_route") {
+      driving = parseTravelTransportRouteEvidence(
+        call.responseJson,
+        "driving"
+      );
+    }
+    if (!transit && call.name === "get_transit_route") {
+      transit = parseTravelTransportRouteEvidence(
+        call.responseJson,
+        "transit"
+      );
+    }
+    if (driving && transit) break;
+  }
+
+  return driving && transit
+    ? ({ driving, transit } satisfies TravelTransportEvidence)
+    : undefined;
+}
+
+async function normalizeTravelPlanForContext(
+  value: unknown,
+  context: ToolExecutionContext
+) {
+  try {
+    return normalizeTravelPlan(value);
+  } catch (error) {
+    if (context.purpose !== "travel" || !isTravelTransportValidationError(error)) {
+      throw error;
+    }
+
+    const evidence = await loadTravelTransportEvidence(context.sessionId);
+    if (!evidence) {
+      throw error;
+    }
+
+    return normalizeTravelPlan(
+      completeTravelPlanTransportPayload(value, evidence)
+    );
+  }
+}
+
 async function normalizeCreateTripInput(
   args: Record<string, unknown>,
   context: ToolExecutionContext,
@@ -1386,7 +1475,7 @@ async function normalizeCreateTripInput(
   let travelPlan =
     args.travelPlan === undefined
       ? undefined
-      : normalizeTravelPlan(args.travelPlan);
+      : await normalizeTravelPlanForContext(args.travelPlan, context);
 
   if (context.purpose === "travel" && !travelPlan) {
     throw new Error("旅行规划必须提供结构化 travelPlan。");
@@ -1456,7 +1545,16 @@ async function normalizeCreateTripInput(
         )
       : travelPlanWithEvidence;
 
-  if (context.purpose === "travel" && normalizedTravelPlan) {
+  const alignedTravelPlan =
+    context.purpose === "travel" && normalizedTravelPlan
+      ? alignTravelPlanAttractionsWithRoute(
+          normalizedTravelPlan,
+          schedule.stops,
+          schedule.legs
+        )
+      : normalizedTravelPlan;
+
+  if (context.purpose === "travel" && alignedTravelPlan) {
     assertTravelItinerarySchedule({
       prompt: context.prompt,
       timezone,
@@ -1475,7 +1573,7 @@ async function normalizeCreateTripInput(
     finalStopName: readOptionalString(args, "finalStopName"),
     stops: schedule.stops,
     legs: schedule.legs,
-    travelPlan: normalizedTravelPlan,
+    travelPlan: alignedTravelPlan,
   };
 }
 
@@ -1589,7 +1687,7 @@ async function normalizeReplaceRouteInput(
   let travelPlan =
     args.travelPlan === undefined
       ? parseTravelPlanJson(current.trip.travelPlanJson)
-      : normalizeTravelPlan(args.travelPlan);
+      : await normalizeTravelPlanForContext(args.travelPlan, context);
 
   if (context.purpose === "travel" && travelPlan) {
     assertTravelPlanAttractionCoverage(travelPlan);
@@ -1656,7 +1754,16 @@ async function normalizeReplaceRouteInput(
         )
       : travelPlanWithEvidence;
 
-  if (context.purpose === "travel" && normalizedTravelPlan) {
+  const alignedTravelPlan =
+    context.purpose === "travel" && normalizedTravelPlan
+      ? alignTravelPlanAttractionsWithRoute(
+          normalizedTravelPlan,
+          schedule.stops,
+          schedule.legs
+        )
+      : normalizedTravelPlan;
+
+  if (context.purpose === "travel" && alignedTravelPlan) {
     assertTravelItinerarySchedule({
       prompt: context.prompt,
       timezone: current.trip.timezone,
@@ -1678,7 +1785,7 @@ async function normalizeReplaceRouteInput(
     status: readOptionalString(args, "status") ?? "monitoring",
     stops: schedule.stops,
     legs: schedule.legs,
-    travelPlan: normalizedTravelPlan ?? undefined,
+    travelPlan: alignedTravelPlan ?? undefined,
   };
 }
 
@@ -1897,7 +2004,7 @@ async function executeToolCall(
 
   if (name === "update_trip_summary") {
     const tripId = readTripId(args, context);
-    const travelPlan =
+    let travelPlan =
       args.travelPlan === undefined
         ? undefined
         : ensureTravelPlanWeatherCoverage(
@@ -1907,6 +2014,15 @@ async function executeToolCall(
             ),
             parseTravelDateRange(context.prompt) ?? undefined
           );
+
+    if (context.purpose === "travel" && travelPlan) {
+      const current = await loadCurrentRouteInputs(tripId, context.userId);
+      travelPlan = alignTravelPlanAttractionsWithRoute(
+        travelPlan,
+        current.stops,
+        current.legs
+      );
+    }
 
     if (context.purpose === "travel" && travelPlan) {
       assertTravelPlanAttractionCoverage(travelPlan);

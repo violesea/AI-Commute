@@ -136,6 +136,17 @@ function AttractionList({
                   </span>
                 ) : null}
               </div>
+              <span
+                className={`mt-2 inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold ${
+                  attraction.routeStatus === "planned"
+                    ? "bg-[#dcfce7] text-[#166534]"
+                    : "bg-[#fef3c7] text-[#92400e]"
+                }`}
+              >
+                {attraction.routeStatus === "planned"
+                  ? "已安排进路线"
+                  : "备选 / 顺路可选"}
+              </span>
               <p className="mt-2 text-sm leading-6 text-[#434655]">
                 {attraction.reason}
               </p>
@@ -418,6 +429,14 @@ export function TravelPlanCard({
         <div className="flex items-center gap-2">
           <MapPin aria-hidden="true" className="size-5 text-[#2563eb]" />
           <h2 className="text-lg font-bold text-[#191c1e]">景点推荐与理由</h2>
+        </div>
+        <div className="mt-3 rounded-2xl border border-[#93c5fd]/55 bg-[#eff6ff] px-4 py-3 text-xs leading-5 text-[#1e40af]">
+          <p className="font-bold">
+            本次路线已安排 {plan.attractions.filter((attraction) => attraction.routeStatus === "planned").length} 个景点，备选 / 顺路可选 {plan.attractions.filter((attraction) => attraction.routeStatus !== "planned").length} 个景点。
+          </p>
+          <p className="mt-1">
+            “已安排”只认结构化 stops 和关联路线段；未进入实际路线的推荐仅供调整行程时选择。
+          </p>
         </div>
         <div className="mt-4 grid gap-4 md:grid-cols-2">
           <AttractionList
