@@ -381,6 +381,16 @@ describe("createOpenAiChatClient", () => {
             additionalProperties: false,
           },
         },
+        {
+          name: "create_memory_candidate",
+          description: "Create a memory candidate",
+          parameters: {
+            type: "object",
+            properties: { valueJson: {} },
+            required: ["valueJson"],
+            additionalProperties: false,
+          },
+        },
       ],
       model: "deepseek-v4-flash",
       purpose: "travel",
@@ -405,12 +415,14 @@ describe("createOpenAiChatClient", () => {
               };
             };
             _value?: { type?: string };
+            valueJson?: { type?: string };
           };
         };
       };
     }>;
     const createTripTool = requestTools[0];
     const emptyTool = requestTools[1];
+    const untypedTool = requestTools[2];
     const parameters = createTripTool?.function.parameters;
 
     expect(createTripTool?.function.strict).toBe(true);
@@ -428,6 +440,9 @@ describe("createOpenAiChatClient", () => {
     expect(emptyTool?.function.parameters).toMatchObject({
       properties: { _value: { type: "string" } },
       required: ["_value"],
+    });
+    expect(untypedTool?.function.parameters).toMatchObject({
+      properties: { valueJson: { type: "string" } },
     });
     completionMock.mockReset();
   });

@@ -75,6 +75,15 @@ function toDeepSeekStrictSchema(value: unknown): unknown {
   const schema = asJsonSchemaRecord(value);
   if (!schema) return value;
 
+  if (
+    schema.type === undefined &&
+    schema.properties === undefined &&
+    schema.anyOf === undefined &&
+    schema.$ref === undefined
+  ) {
+    return { type: "string" };
+  }
+
   if (schema.type === "object" || schema.properties !== undefined) {
     const properties = asJsonSchemaRecord(schema.properties) ?? {};
     if (Object.keys(properties).length === 0) {
