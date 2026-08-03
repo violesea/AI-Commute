@@ -69,6 +69,23 @@ function parseDateKey(value: string): PlainDate {
   return { year, month, day };
 }
 
+const EXPLICIT_TIME_ZONE_SUFFIX = /(?:Z|[+-]\d{2}:?\d{2})$/i;
+
+/**
+ * Model tool arguments usually contain wall-clock times without an offset.
+ * Interpret those values in the trip timezone so the result is stable even
+ * when the server process runs in UTC.
+ */
+export function parseDateTimeInTimeZone(
+  value: string,
+  timezone = DEFAULT_TIME_ZONE
+) {
+  const trimmed = value.trim();
+  return EXPLICIT_TIME_ZONE_SUFFIX.test(trimmed)
+    ? new Date(trimmed)
+    : fromZonedTime(trimmed, timezone || DEFAULT_TIME_ZONE);
+}
+
 function addCalendarDays(value: PlainDate, days: number): PlainDate {
   const date = new Date(Date.UTC(value.year, value.month - 1, value.day));
   date.setUTCDate(date.getUTCDate() + days);
@@ -120,7 +137,7 @@ function normalizeDateRange(
 
 export function parseTravelDateRange(prompt: string): TravelDateRange | null {
   const chineseRange = prompt.match(
-    /(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?\s*(?:至|到|～|~|—|-)\s*(?:(\d{4})\s*年\s*)?(?:(\d{1,2})\s*月\s*)?(\d{1,2})\s*日?/
+    /(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?\s*(?:\s*(?:[（(][^）)]{0,16}[）)]|(?:周|星期)[一二三四五六日天])\s*)?(?:至|到|～|~|—|-)\s*(?:(\d{4})\s*年\s*)?(?:(\d{1,2})\s*月\s*)?(\d{1,2})\s*日?/
   );
 
   if (chineseRange) {
@@ -137,7 +154,7 @@ export function parseTravelDateRange(prompt: string): TravelDateRange | null {
   }
 
   const isoRange = prompt.match(
-    /(\d{4})[-/](\d{1,2})[-/](\d{1,2})\s*(?:至|到|～|~|—|-)\s*(?:(\d{4})[-/])?(?:(\d{1,2})[-/])?(\d{1,2})/
+    /(\d{4})[-/](\d{1,2})[-/](\d{1,2})\s*(?:\s*(?:[（(][^）)]{0,16}[）)]|(?:周|星期)[A-Za-z一二三四五六日天]+)\s*)?(?:至|到|～|~|—|-)\s*(?:(\d{4})[-/])?(?:(\d{1,2})[-/])?(\d{1,2})/
   );
 
   if (!isoRange) return null;

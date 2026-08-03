@@ -4,6 +4,7 @@ import {
   assertTravelItinerarySchedule,
   findDailyDrivingLimitViolation,
   normalizeTravelItinerarySchedule,
+  parseDateTimeInTimeZone,
   parseDailyDrivingLimitMinutes,
   parseTravelDateRange,
 } from "@/lib/trips/travel-schedule";
@@ -33,6 +34,53 @@ describe("travel itinerary schedule", () => {
       endDate: "2026-08-11",
       days: 4,
     });
+  });
+
+  it("parses date ranges with weekday labels between the dates", () => {
+    expect(
+      parseTravelDateRange(
+        "请规划2026年8月8日（周六）至2026年8月12日（周三）的旅行"
+      )
+    ).toEqual({
+      startDate: "2026-08-08",
+      endDate: "2026-08-12",
+      days: 5,
+    });
+  });
+
+  it("interprets offset-less model timestamps in the trip timezone", () => {
+    expect(
+      parseDateTimeInTimeZone("2026-08-08T07:00:00", "Asia/Shanghai").toISOString()
+    ).toBe("2026-08-07T23:00:00.000Z");
+    expect(
+      parseDateTimeInTimeZone("2026-08-08T07:00:00Z", "Asia/Shanghai").toISOString()
+    ).toBe("2026-08-08T07:00:00.000Z");
+  });
+
+  it("keeps daylight checks active when weekday labels are present", () => {
+    expect(() =>
+      assertTravelItinerarySchedule({
+        prompt:
+          "2026年8月8日（周六）至2026年8月12日（周三），只安排白天驾驶的自驾旅行",
+        timezone: "Asia/Shanghai",
+        stops: [
+          { name: "北京", lngLat: "116.506640,39.960684" },
+          { name: "正蓝旗", lngLat: "116.013628,42.247801" },
+        ],
+        legs: [
+          {
+            originName: "北京",
+            originLngLat: "116.506640,39.960684",
+            destinationName: "正蓝旗",
+            destinationLngLat: "116.013628,42.247801",
+            routeMinutes: 311,
+            mode: "driving",
+            latestDepartAt: new Date("2026-08-08T07:00:00.000Z"),
+            targetArriveAt: new Date("2026-08-08T12:31:00.000Z"),
+          },
+        ],
+      })
+    ).toThrow(/不能把这段夜间自驾落盘/);
   });
 
   it("parses an explicit daily self-drive ceiling", () => {

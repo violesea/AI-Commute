@@ -61,6 +61,7 @@ import {
   assertTravelItinerarySchedule,
   ensureTravelPlanRouteRiskCoverage,
   normalizeTravelItinerarySchedule,
+  parseDateTimeInTimeZone,
   parseTravelDateRange,
 } from "@/lib/trips/travel-schedule";
 import type { AgentPlanningPurpose } from "@/lib/agent/types";
@@ -1068,13 +1069,17 @@ function readNumber(value: Record<string, unknown>, key: string) {
   return numeric;
 }
 
-function readOptionalDate(value: Record<string, unknown>, key: string) {
+function readOptionalDate(
+  value: Record<string, unknown>,
+  key: string,
+  timezone?: string
+) {
   const raw = value[key];
   if (typeof raw !== "string" || !raw.trim()) {
     return undefined;
   }
 
-  const date = new Date(raw);
+  const date = timezone ? parseDateTimeInTimeZone(raw, timezone) : new Date(raw);
   if (Number.isNaN(date.getTime())) {
     throw new Error(`Tool argument ${key} is not a valid date.`);
   }
@@ -1269,21 +1274,21 @@ function normalizeBufferComponent(value: unknown): BufferComponentInput {
   };
 }
 
-function normalizeStop(value: unknown): PlannedTripStopInput {
+function normalizeStop(value: unknown, timezone?: string): PlannedTripStopInput {
   const stop = requireObject(value, "stops[]");
   return {
     order: readOptionalNumber(stop, "order"),
     name: readString(stop, "name"),
     address: readOptionalString(stop, "address"),
     lngLat: readOptionalString(stop, "lngLat"),
-    targetArriveAt: readOptionalDate(stop, "targetArriveAt"),
+    targetArriveAt: readOptionalDate(stop, "targetArriveAt", timezone),
     plannedStayMin: readOptionalNumber(stop, "plannedStayMin"),
     kind: readOptionalString(stop, "kind"),
     notes: readOptionalString(stop, "notes"),
   };
 }
 
-function normalizeLeg(value: unknown): PlannedTripLegInput {
+function normalizeLeg(value: unknown, timezone?: string): PlannedTripLegInput {
   const leg = requireObject(value, "legs[]");
   return {
     order: readOptionalNumber(leg, "order"),
@@ -1297,8 +1302,8 @@ function normalizeLeg(value: unknown): PlannedTripLegInput {
     bufferComponents: readArray(leg, "bufferComponents").map(
       normalizeBufferComponent
     ),
-    latestDepartAt: readOptionalDate(leg, "latestDepartAt"),
-    targetArriveAt: readOptionalDate(leg, "targetArriveAt"),
+    latestDepartAt: readOptionalDate(leg, "latestDepartAt", timezone),
+    targetArriveAt: readOptionalDate(leg, "targetArriveAt", timezone),
     mode: readOptionalString(leg, "mode"),
     routeTitle: readOptionalString(leg, "routeTitle"),
     routeRationale: readOptionalString(leg, "routeRationale"),
@@ -1346,9 +1351,17 @@ async function normalizeCreateTripInput(
   }
 
   const timezone = readString(args, "timezone", settings.timezone);
-  const stops = readArray(args, "stops").map(normalizeStop);
-  const legs = readArray(args, "legs").map(normalizeLeg);
-  const initialTargetArriveAt = readOptionalDate(args, "targetArriveAt");
+  const stops = readArray(args, "stops").map((stop) =>
+    normalizeStop(stop, timezone)
+  );
+  const legs = readArray(args, "legs").map((leg) =>
+    normalizeLeg(leg, timezone)
+  );
+  const initialTargetArriveAt = readOptionalDate(
+    args,
+    "targetArriveAt",
+    timezone
+  );
   const schedule =
     context.purpose === "travel" && travelPlan
       ? normalizeTravelItinerarySchedule({
@@ -1516,10 +1529,15 @@ async function normalizeReplaceRouteInput(
 ) {
   const tripId = readTripId(args, context);
   const current = await loadCurrentRouteInputs(tripId, context.userId);
+  const timezone = current.trip.timezone;
   const stopArgs = readOptionalArray(args, "stops");
   const legArgs = readOptionalArray(args, "legs");
-  const stops = stopArgs ? stopArgs.map(normalizeStop) : current.stops;
-  const legs = legArgs ? legArgs.map(normalizeLeg) : current.legs;
+  const stops = stopArgs
+    ? stopArgs.map((stop) => normalizeStop(stop, timezone))
+    : current.stops;
+  const legs = legArgs
+    ? legArgs.map((leg) => normalizeLeg(leg, timezone))
+    : current.legs;
   let travelPlan =
     args.travelPlan === undefined
       ? parseTravelPlanJson(current.trip.travelPlanJson)
@@ -1539,7 +1557,7 @@ async function normalizeReplaceRouteInput(
   }
 
   const initialTargetArriveAt =
-    readOptionalDate(args, "targetArriveAt") ??
+    readOptionalDate(args, "targetArriveAt", timezone) ??
     current.trip.targetArriveAt ??
     undefined;
   const schedule =
@@ -1846,7 +1864,11 @@ async function executeToolCall(
       userId: context.userId,
       title: readOptionalString(args, "title"),
       finalStopName: readOptionalString(args, "finalStopName"),
-      targetArriveAt: readOptionalDate(args, "targetArriveAt"),
+      targetArriveAt: readOptionalDate(
+        args,
+        "targetArriveAt",
+        settings.timezone
+      ),
       status: readOptionalString(args, "status"),
       travelPlan,
     };
