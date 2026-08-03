@@ -354,13 +354,7 @@ describe("travel planning integration", () => {
     expect(result.tripId).toBeTruthy();
     expect(callCount).toBe(3);
     expect(toolChoices[0]).toBeUndefined();
-    expect(toolChoices[1]).toEqual({
-      type: "function",
-      function: { name: "create_trip" },
-    });
-    expect(toolChoices[2]).toEqual({
-      type: "function",
-      function: { name: "create_trip" },
-    });
+    expect(toolChoices[1]).toBeUndefined();
+    expect(toolChoices[2]).toBeUndefined();
   });
 });

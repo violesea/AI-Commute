@@ -1604,7 +1604,7 @@ async function runConversationAttempt(input: {
           input.context.purpose === "travel"
             ? TRAVEL_PLANNING_MODEL
             : input.settings.model,
-        toolChoice: forceCreateTrip
+        toolChoice: forceCreateTrip && input.context.purpose !== "travel"
           ? { type: "function", function: { name: "create_trip" } }
           : undefined,
         signal: input.signal,
