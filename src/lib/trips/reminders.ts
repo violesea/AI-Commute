@@ -9,6 +9,7 @@ export type BuildReminderScheduleInput = {
   cadenceMinutes?: readonly number[];
   now?: Date;
   travelWeatherRefreshAt?: Date;
+  weatherRefreshHoursBeforeDeparture?: readonly number[];
 };
 
 export function buildReminderSchedule({
@@ -18,6 +19,7 @@ export function buildReminderSchedule({
   cadenceMinutes = DEFAULT_REMINDER_CADENCE_MINUTES,
   now,
   travelWeatherRefreshAt,
+  weatherRefreshHoursBeforeDeparture = [72, 24],
 }: BuildReminderScheduleInput): ReminderJobData[] {
   const routeReminders = cadenceMinutes
     .map((minutesBeforeDeparture) => {
@@ -44,8 +46,17 @@ export function buildReminderSchedule({
     .filter((reminder) => !now || reminder.scheduledFor >= now);
 
   const weatherRefreshReminders = travelWeatherRefreshAt
-    ? [72, 24]
+    ? weatherRefreshHoursBeforeDeparture
         .map((hoursBeforeDeparture): ReminderJobData => {
+          if (
+            !Number.isFinite(hoursBeforeDeparture) ||
+            hoursBeforeDeparture < 0
+          ) {
+            throw new Error(
+              "Weather refresh hours must be non-negative numbers."
+            );
+          }
+
           const scheduledFor = new Date(
             travelWeatherRefreshAt.getTime() - hoursBeforeDeparture * 60 * 60_000
           );

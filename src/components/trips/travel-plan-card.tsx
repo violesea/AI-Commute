@@ -17,6 +17,7 @@ import { GlassCard } from "@/components/glass-card";
 import type {
   TravelAttraction,
   TravelPlan,
+  TravelRecommendationEvidence,
   TravelTransportMode,
 } from "@/lib/trips/travel-plan";
 
@@ -38,6 +39,61 @@ function weatherRiskLabel(risk: "low" | "medium" | "high") {
   if (risk === "high") return "高风险";
   if (risk === "medium") return "需留意";
   return "较稳定";
+}
+
+function formatWeatherObservedAt(value?: string) {
+  if (!value) return "未记录";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "未记录";
+
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Shanghai",
+  }).format(date);
+}
+
+function formatWeatherCoverage(plan: TravelPlan) {
+  const dates = (plan.weather.forecast ?? [])
+    .map((forecast) => forecast.date)
+    .filter((date): date is string => Boolean(date))
+    .sort();
+
+  if (dates.length === 0) return "未提供日期范围";
+  if (dates.length === 1) return dates[0];
+  return `${dates[0]} 至 ${dates[dates.length - 1]}`;
+}
+
+function recommendationEvidenceLabel(
+  evidence?: TravelRecommendationEvidence
+) {
+  if (evidence?.label) return evidence.label;
+  if (evidence?.source === "user_input") return "用户提供，仍需现场核对";
+  if (evidence?.source === "amap_poi") {
+    return "高德地点检索参考，仍需核对开放与价格";
+  }
+  if (evidence?.source === "amap_route") return "高德路线参考，出发前刷新";
+  if (evidence?.source === "amap_weather") return "高德天气参考，出发前刷新";
+  return "AI建议，出发前核验";
+}
+
+function RecommendationEvidence({
+  evidence,
+}: {
+  evidence?: TravelRecommendationEvidence;
+}) {
+  return (
+    <p className="mt-2 text-[11px] font-semibold leading-5 text-[#5b6072]">
+      证据：{recommendationEvidenceLabel(evidence)}
+      {evidence?.observedAt
+        ? ` · ${formatWeatherObservedAt(evidence.observedAt)}`
+        : ""}
+      {evidence?.note ? ` · ${evidence.note}` : ""}
+    </p>
+  );
 }
 
 function AttractionList({
@@ -102,6 +158,7 @@ function AttractionList({
                   {attraction.weatherNote ?? attraction.notes}
                 </p>
               ) : null}
+              <RecommendationEvidence evidence={attraction.evidence} />
             </article>
           ))
         )}
@@ -153,6 +210,12 @@ export function TravelPlanCard({ plan }: { plan: TravelPlan }) {
             </span>
           </div>
         ) : null}
+        <div className="mt-3 grid gap-2 rounded-2xl border border-[#c3c6d7]/50 bg-white/60 px-4 py-3 text-xs font-semibold leading-5 text-[#5b6072] sm:grid-cols-2">
+          <span>
+            最近天气刷新：{formatWeatherObservedAt(plan.weather.observedAt)}
+          </span>
+          <span>预报覆盖：{formatWeatherCoverage(plan)}</span>
+        </div>
         {plan.weather.forecast?.length ? (
           <div className="mt-4 rounded-2xl bg-white/60 p-4">
             <div className="flex items-center gap-2 text-sm font-bold text-[#191c1e]">
@@ -367,6 +430,7 @@ export function TravelPlanCard({ plan }: { plan: TravelPlan }) {
                       {[lodging.budget, lodging.notes].filter(Boolean).join(" · ")}
                     </p>
                   ) : null}
+                  <RecommendationEvidence evidence={lodging.evidence} />
                 </article>
               ))
             )}
@@ -397,6 +461,7 @@ export function TravelPlanCard({ plan }: { plan: TravelPlan }) {
                       {[food.budget, food.notes].filter(Boolean).join(" · ")}
                     </p>
                   ) : null}
+                  <RecommendationEvidence evidence={food.evidence} />
                 </article>
               ))
             )}

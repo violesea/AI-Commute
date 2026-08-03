@@ -4,6 +4,25 @@ export type TravelAttractionCategory = "natural" | "cultural";
 
 export type TravelWeatherRisk = "low" | "medium" | "high";
 
+export type TravelRecommendationSource =
+  | "amap_poi"
+  | "amap_route"
+  | "amap_weather"
+  | "agent_inference"
+  | "user_input";
+
+export type TravelRecommendationVerification =
+  | "provider_reference"
+  | "needs_verification";
+
+export type TravelRecommendationEvidence = {
+  source: TravelRecommendationSource;
+  status: TravelRecommendationVerification;
+  label: string;
+  observedAt?: string;
+  note?: string;
+};
+
 export type TravelWeatherForecast = {
   date?: string;
   day?: number;
@@ -63,6 +82,7 @@ export type TravelAttraction = {
   bestTime?: string;
   weatherNote?: string;
   notes?: string;
+  evidence?: TravelRecommendationEvidence;
 };
 
 export type TravelLodging = {
@@ -71,6 +91,7 @@ export type TravelLodging = {
   reason: string;
   budget?: string;
   notes?: string;
+  evidence?: TravelRecommendationEvidence;
 };
 
 export type TravelFood = {
@@ -80,6 +101,7 @@ export type TravelFood = {
   reason: string;
   budget?: string;
   notes?: string;
+  evidence?: TravelRecommendationEvidence;
 };
 
 export type TravelBudgetItem = {
@@ -261,6 +283,76 @@ function normalizeWeatherRouteRisk(value: unknown): TravelWeatherRouteRisk {
   };
 }
 
+const RECOMMENDATION_SOURCES = new Set<TravelRecommendationSource>([
+  "amap_poi",
+  "amap_route",
+  "amap_weather",
+  "agent_inference",
+  "user_input",
+]);
+
+function defaultRecommendationEvidence(
+  source: TravelRecommendationSource
+): Pick<TravelRecommendationEvidence, "label" | "status"> {
+  if (source === "agent_inference") {
+    return {
+      label: "AI建议，出发前核验",
+      status: "needs_verification",
+    };
+  }
+
+  if (source === "user_input") {
+    return {
+      label: "用户提供，仍需现场核对",
+      status: "needs_verification",
+    };
+  }
+
+  if (source === "amap_weather") {
+    return {
+      label: "高德天气参考，出发前刷新",
+      status: "provider_reference",
+    };
+  }
+
+  return {
+    label: "高德地点检索参考，仍需核对开放与价格",
+    status: "provider_reference",
+  };
+}
+
+function normalizeRecommendationEvidence(
+  value: unknown,
+  label: string
+): TravelRecommendationEvidence {
+  const record =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {};
+  const requestedSource = readText(record, "source", label, false);
+  const source = RECOMMENDATION_SOURCES.has(
+    requestedSource as TravelRecommendationSource
+  )
+    ? (requestedSource as TravelRecommendationSource)
+    : "agent_inference";
+  const defaults = defaultRecommendationEvidence(source);
+  const requestedStatus = readText(record, "status", label, false);
+  const status: TravelRecommendationVerification =
+    source === "agent_inference" || source === "user_input"
+      ? "needs_verification"
+      : requestedStatus === "needs_verification"
+        ? "needs_verification"
+        : defaults.status;
+
+  return {
+    source,
+    status,
+    label: readText(record, "label", label, false) ?? defaults.label,
+    observedAt: readText(record, "observedAt", label, false),
+    note: readText(record, "note", label, false),
+  };
+}
+
 function normalizeAttraction(value: unknown): TravelAttraction {
   const record = readRecord(value, "travelPlan.attractions[]");
   const category = readText(record, "category", "travelPlan.attractions[]");
@@ -283,6 +375,10 @@ function normalizeAttraction(value: unknown): TravelAttraction {
       false
     ),
     notes: readText(record, "notes", "travelPlan.attractions[]", false),
+    evidence: normalizeRecommendationEvidence(
+      record.evidence,
+      "travelPlan.attractions[].evidence"
+    ),
   };
 }
 
@@ -309,6 +405,10 @@ function normalizeLodging(value: unknown): TravelLodging {
     reason: readText(record, "reason", "travelPlan.lodging[]")!,
     budget: readText(record, "budget", "travelPlan.lodging[]", false),
     notes: readText(record, "notes", "travelPlan.lodging[]", false),
+    evidence: normalizeRecommendationEvidence(
+      record.evidence,
+      "travelPlan.lodging[].evidence"
+    ),
   };
 }
 
@@ -322,6 +422,10 @@ function normalizeFood(value: unknown): TravelFood {
     reason: readText(record, "reason", "travelPlan.food[]")!,
     budget: readText(record, "budget", "travelPlan.food[]", false),
     notes: readText(record, "notes", "travelPlan.food[]", false),
+    evidence: normalizeRecommendationEvidence(
+      record.evidence,
+      "travelPlan.food[].evidence"
+    ),
   };
 }
 

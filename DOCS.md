@@ -5,7 +5,7 @@ skills_used:
 model_used: GPT-5
 model_source: visible_runtime
 created_at: 2026-08-03T00:00:00+08:00
-updated_at: 2026-08-03T17:57:07+08:00
+updated_at: 2026-08-03T18:24:00+08:00
 updated_by: codex
 ---
 
@@ -21,7 +21,13 @@ updated_by: codex
 
 ## 天气刷新任务
 
-旅行首段出发前约 72 小时和 24 小时各生成一个 `weather_refresh` 任务；scheduler 将其作为旅行路线复查运行，先刷新天气再决定是否更新路线。普通通勤仍只使用既有 `recheck` 和 `depart_now` 任务。
+旅行首段出发前约 72 小时和 24 小时各生成一个 `weather_refresh` 任务；每个旅行路段再生成一个出发前 1 小时的 `weather_refresh` 任务。scheduler 将其作为旅行路线复查运行，先刷新天气再决定是否更新路线。普通通勤仍只使用既有 `recheck` 和 `depart_now` 任务。
+
+旅行详情页显示最近天气刷新时间和预报覆盖日期。创建或更新旅行计划时，服务端从当前会话最近一次 `get_weather_reference` 工具调用补齐天气来源、`observedAt` 和缺失的预报；没有足够证据的日期仍显示为未知并要求出发前刷新。
+
+## 推荐证据与核验状态
+
+景点、住宿和美食都支持 `evidence`：来源可为 `amap_poi`、`amap_route`、`amap_weather`、`agent_inference` 或 `user_input`。应用会从当前会话已完成的 POI 工具调用匹配推荐名称并补齐高德参考时间；未匹配时默认显示“AI建议，出发前核验”。高德来源也只代表检索参考，开放时间、价格、预约和临时管制仍需出发前核对。
 
 ## 模型配置与接入验证
 

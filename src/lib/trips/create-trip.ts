@@ -260,8 +260,12 @@ export async function createPlannedTrip(input: CreatePlannedTripInput) {
           tripId: trip.id,
           legId: leg.id,
           latestDepartAt,
-          travelWeatherRefreshAt:
-            input.travelPlan && index === 0 ? latestDepartAt : undefined,
+          travelWeatherRefreshAt: input.travelPlan ? latestDepartAt : undefined,
+          weatherRefreshHoursBeforeDeparture: input.travelPlan
+            ? index === 0
+              ? [72, 24, 1]
+              : [1]
+            : undefined,
         }),
       });
     }

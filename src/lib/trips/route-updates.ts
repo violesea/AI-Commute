@@ -421,8 +421,14 @@ export async function replaceTripRoute(input: ReplaceTripRouteInput) {
           tripId: trip.id,
           legId: leg.id,
           latestDepartAt,
-          travelWeatherRefreshAt:
-            travelPlanForReminders && index === 0 ? latestDepartAt : undefined,
+          travelWeatherRefreshAt: travelPlanForReminders
+            ? latestDepartAt
+            : undefined,
+          weatherRefreshHoursBeforeDeparture: travelPlanForReminders
+            ? index === 0
+              ? [72, 24, 1]
+              : [1]
+            : undefined,
         }),
       });
     }
@@ -543,6 +549,11 @@ export async function selectRouteCandidate(input: SelectRouteCandidateInput) {
 export async function replaceReminderSchedule(input: ReplaceReminderScheduleInput) {
   const trip = await findOwnedTrip(input.tripId, input.userId);
   const travelPlan = parseTravelPlanJson(trip.travelPlanJson);
+  const firstTripLeg = await prisma.tripLeg.findFirst({
+    where: { tripId: input.tripId },
+    orderBy: { order: "asc" },
+    select: { order: true },
+  });
   const cadenceMinutes = normalizeCadenceMinutes(input.cadenceMinutes);
   const legs = input.legId || input.legOrder !== undefined
     ? [await findOwnedLeg(input)]
@@ -571,10 +582,12 @@ export async function replaceReminderSchedule(input: ReplaceReminderScheduleInpu
           latestDepartAt: leg.latestDepartAt,
           cadenceMinutes,
           now: input.now,
-          travelWeatherRefreshAt:
-            travelPlan && leg.order === legs[0]?.order
-              ? leg.latestDepartAt
-              : undefined,
+          travelWeatherRefreshAt: travelPlan ? leg.latestDepartAt : undefined,
+          weatherRefreshHoursBeforeDeparture: travelPlan
+            ? leg.order === firstTripLeg?.order
+              ? [72, 24, 1]
+              : [1]
+            : undefined,
         }),
       });
     }

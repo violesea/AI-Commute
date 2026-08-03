@@ -46,6 +46,9 @@ import {
   ensureTravelPlanWeatherCoverage,
   normalizeTravelPlan,
   parseTravelPlanJson,
+  type TravelPlan,
+  type TravelRecommendationEvidence,
+  type TravelWeatherForecast,
 } from "@/lib/trips/travel-plan";
 import {
   addTravelSchedulePitfall,
@@ -144,6 +147,168 @@ function normalizePrompt(prompt: string) {
   }
 
   return trimmed;
+}
+
+async function enrichTravelPlanWithLatestWeatherEvidence(
+  plan: TravelPlan,
+  sessionId: string
+): Promise<TravelPlan> {
+  const latestWeatherCall = await prisma.agentToolCall.findFirst({
+    where: {
+      agentSessionId: sessionId,
+      name: "get_weather_reference",
+      status: "completed",
+    },
+    orderBy: { createdAt: "desc" },
+    select: { responseJson: true, createdAt: true },
+  });
+
+  if (!latestWeatherCall) {
+    return plan;
+  }
+
+  let response: Record<string, unknown> = {};
+  try {
+    const parsed = latestWeatherCall.responseJson
+      ? JSON.parse(latestWeatherCall.responseJson)
+      : null;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      response = parsed as Record<string, unknown>;
+    }
+  } catch {
+    response = {};
+  }
+
+  const responseForecast = Array.isArray(response.forecast)
+    ? response.forecast
+        .filter(
+          (item): item is Record<string, unknown> =>
+            Boolean(item) && typeof item === "object" && !Array.isArray(item)
+        )
+        .map((item): TravelWeatherForecast | null => {
+          const date = typeof item.date === "string" ? item.date : undefined;
+          const summary =
+            typeof item.summary === "string" ? item.summary.trim() : "";
+          if (!summary) return null;
+
+          return {
+            date,
+            location:
+              typeof response.city === "string" ? response.city : undefined,
+            summary,
+            risk: "medium",
+            drivingAdvice: "出发前根据最新天气和道路情况确认自驾时段。",
+            outdoorAdvice: "根据最新降雨和大风预警调整户外景点。",
+          };
+        })
+        .filter((item): item is TravelWeatherForecast => Boolean(item))
+    : [];
+
+  return {
+    ...plan,
+    weather: {
+      ...plan.weather,
+      source: "高德天气参考",
+      observedAt:
+        typeof response.observedAt === "string" && response.observedAt.trim()
+          ? response.observedAt
+          : latestWeatherCall.createdAt.toISOString(),
+      forecast:
+        plan.weather.forecast && plan.weather.forecast.length > 0
+          ? plan.weather.forecast
+          : responseForecast,
+    },
+  };
+}
+
+function normalizeRecommendationName(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[\s·、，,。/（）()]/g, "")
+    .trim();
+}
+
+async function enrichTravelPlanWithToolEvidence(
+  plan: TravelPlan,
+  sessionId: string
+): Promise<TravelPlan> {
+  const weatherEnriched = await enrichTravelPlanWithLatestWeatherEvidence(
+    plan,
+    sessionId
+  );
+  const poiCalls = await prisma.agentToolCall.findMany({
+    where: {
+      agentSessionId: sessionId,
+      name: {
+        in: ["search_poi", "search_natural_attractions", "get_poi_detail"],
+      },
+      status: "completed",
+    },
+    orderBy: { createdAt: "desc" },
+    select: { responseJson: true, createdAt: true },
+  });
+  const poiEvidence: Array<{ name: string; observedAt: string }> = [];
+
+  for (const call of poiCalls) {
+    try {
+      const parsed = call.responseJson ? JSON.parse(call.responseJson) : null;
+      const items = Array.isArray(parsed) ? parsed : parsed ? [parsed] : [];
+
+      for (const item of items) {
+        if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+        const name = (item as Record<string, unknown>).name;
+        if (typeof name === "string" && name.trim()) {
+          poiEvidence.push({
+            name: name.trim(),
+            observedAt: call.createdAt.toISOString(),
+          });
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  function providerEvidenceFor(name: string): TravelRecommendationEvidence | null {
+    const normalizedName = normalizeRecommendationName(name);
+    if (!normalizedName) return null;
+
+    const match = poiEvidence.find((candidate) => {
+      const normalizedCandidate = normalizeRecommendationName(candidate.name);
+      return (
+        normalizedCandidate.length > 1 &&
+        (normalizedName === normalizedCandidate ||
+          normalizedName.includes(normalizedCandidate) ||
+          normalizedCandidate.includes(normalizedName))
+      );
+    });
+    if (!match) return null;
+
+    return {
+      source: "amap_poi",
+      status: "provider_reference",
+      label: "高德地点检索参考，仍需核对开放与价格",
+      observedAt: match.observedAt,
+    };
+  }
+
+  function addProviderEvidence<T extends { name: string; evidence?: TravelRecommendationEvidence }>(
+    item: T
+  ): T {
+    if (item.evidence && item.evidence.source !== "agent_inference") {
+      return item;
+    }
+
+    const evidence = providerEvidenceFor(item.name);
+    return evidence ? { ...item, evidence } : item;
+  }
+
+  return {
+    ...weatherEnriched,
+    attractions: weatherEnriched.attractions.map(addProviderEvidence),
+    lodging: weatherEnriched.lodging.map(addProviderEvidence),
+    food: weatherEnriched.food.map(addProviderEvidence),
+  };
 }
 
 export function formatPlanningFailureMessage(error: unknown) {
@@ -356,6 +521,29 @@ const travelBudgetSchema = objectParameters(
   ["currency", "total", "breakdown"]
 );
 
+const travelRecommendationEvidenceSchema = objectParameters(
+  {
+    source: {
+      type: "string",
+      enum: [
+        "amap_poi",
+        "amap_route",
+        "amap_weather",
+        "agent_inference",
+        "user_input",
+      ],
+    },
+    status: {
+      type: "string",
+      enum: ["provider_reference", "needs_verification"],
+    },
+    label: { type: "string" },
+    observedAt: { type: "string" },
+    note: { type: "string" },
+  },
+  ["source"]
+);
+
 const travelAttractionSchema = objectParameters(
   {
     name: { type: "string" },
@@ -368,6 +556,7 @@ const travelAttractionSchema = objectParameters(
     bestTime: { type: "string" },
     weatherNote: { type: "string" },
     notes: { type: "string" },
+    evidence: travelRecommendationEvidenceSchema,
   },
   ["name", "category", "reason"]
 );
@@ -379,6 +568,7 @@ const travelLodgingSchema = objectParameters(
     reason: { type: "string" },
     budget: { type: "string" },
     notes: { type: "string" },
+    evidence: travelRecommendationEvidenceSchema,
   },
   ["name", "area", "reason"]
 );
@@ -391,6 +581,7 @@ const travelFoodSchema = objectParameters(
     reason: { type: "string" },
     budget: { type: "string" },
     notes: { type: "string" },
+    evidence: travelRecommendationEvidenceSchema,
   },
   ["name", "mustTry", "reason"]
 );
@@ -651,9 +842,9 @@ Plan a practical, evidence-aware trip rather than a generic list of attractions.
 Use read_settings for the default city, timezone, and origin, and use the current-location context when the user says they are starting from their current position. Call get_weather_reference early: its result contains live weather and the available multi-day forecast. Weather is dynamic evidence, not a static label or guarantee. Map the forecast to each itinerary day, populate weather.forecast, and add weather.routeRisks for every meaningful self-drive leg with drivingAdvice and a concrete action. Set dynamicMonitoring to true and state a refreshPolicy such as rechecking before departure and at every scheduled route review. If the forecast horizon does not cover the trip, explicitly mark the later days as unknown and require a refresh before departure.
 Self-driving is a time-varying process. Before calling get_transit_route, get_driving_route, get_walking_route, or get_bicycling_route, resolve both endpoints to lng,lat coordinates with search_poi. Compare self-drive and public transit whenever the route is meaningfully comparable. Use get_driving_route for self-drive and get_transit_route for public transit, then choose driving, transit, or mixed with a reason. Treat route duration and weather as snapshots: avoid claiming that a route is guaranteed, and make bad-weather actions explicit, such as postponing an exposed segment, switching to transit, adding indoor stops, or checking road and parking conditions again.
 Natural scenery is a hard output requirement, not an optional extra. Call search_natural_attractions once before selecting attractions. It searches multiple nature categories for you. Recommend at least three distinct natural candidates for a one-to-three-day trip, at least four for a trip of four days or longer, and at least one cultural candidate. Cover different natural types when the destination supports them, such as mountain, lake, forest, wetland, coast, island, canyon, waterfall, park, or viewpoint. The application rejects a travel plan that has too few natural candidates, so do not stop after finding one scenic spot. Use the evidence returned by tools; do not invent venue-specific facts.
-Search POIs before naming specific lodging or food venues. Explain the reason for every attraction, its best visiting time, suggested stay, and weather note. Search practical lodging areas and local food options. Add concrete pitfalls covering tickets/reservations, peak periods, parking or transit, weather, road conditions, and other destination-specific friction when relevant. The budget is mandatory: provide a total range and a breakdown for lodging, food, fuel/charging, tolls, tickets and other meaningful costs; mark uncertain prices as pending verification and state the assumptions such as party size and vehicle type.
+Search POIs before naming specific lodging or food venues. Explain the reason for every attraction, its best visiting time, suggested stay, and weather note. Add an evidence object to every attraction, lodging, and food recommendation: use source amap_poi only when it comes from a POI search, otherwise use agent_inference; mark prices, opening times, availability, and AI-only suggestions as needs_verification. Search practical lodging areas and local food options. Add concrete pitfalls covering tickets/reservations, peak periods, parking or transit, weather, road conditions, and other destination-specific friction when relevant. The budget is mandatory: provide a total range and a breakdown for lodging, food, fuel/charging, tolls, tickets and other meaningful costs; mark uncertain prices as pending verification and state the assumptions such as party size and vehicle type.
 For a normal one-to-three-day request, keep evidence bounded but sufficient: make one initial weather call, one broad natural-attraction search, at most ten representative attraction or practical-place keyword searches plus one lodging and one food keyword, and call each main driving/transit comparison at most once. Once you have the weather forecast, at least three natural candidates, a cultural candidate, lodging, food, and both transport options, stop searching and immediately call create_trip. Do not search every possible option or repeat an equivalent route call.
-The create_trip call is mandatory. In travel mode it must include a complete travelPlan object with destination, summary, weather including forecast and routeRisks, transport.driving, transport.transit, budget, attractions, lodging, food, and pitfalls. Stops and legs must form a chronological itinerary; every leg must include explicit latestDepartAt and targetArriveAt in the requested date range, with no cross-midnight driving. Use stop notes for day/order context and route rationale for transport decisions. During a later route recheck, call get_weather_reference again before deciding. If weather, traffic, or road conditions change, update the route and pass the refreshed travelPlan to update_trip_summary or replace_trip_stops/replace_trip_legs so the visible plan stays consistent. If the server rejects a create or replacement because a daylight-driving leg arrives after the local sunset safety line, do not repeat the same times: choose early return, add an intermediate overnight stop and split the leg, or shorten/remove the remote attraction, then call the route tool again.
+The create_trip call is mandatory. In travel mode it must include a complete travelPlan object with destination, summary, weather including forecast and routeRisks, transport.driving, transport.transit, budget, attractions, lodging, food, and pitfalls. Stops and legs must form a chronological itinerary; every leg must include explicit latestDepartAt and targetArriveAt in the requested date range, with no cross-midnight driving. Use stop notes for day/order context and route rationale for transport decisions. Every travel leg gets a weather refresh task one hour before departure; the first leg also gets 72-hour and 24-hour refresh tasks. During a later route recheck, call get_weather_reference again before deciding. If weather, traffic, or road conditions change, update the route and pass the refreshed travelPlan to update_trip_summary or replace_trip_stops/replace_trip_legs so the visible plan stays consistent. If the server rejects a create or replacement because a daylight-driving leg arrives after the local sunset safety line, do not repeat the same times: choose early return, add an intermediate overnight stop and split the leg, or shorten/remove the remote attraction, then call the route tool again.
 Final user-facing replies must be plain text without Markdown formatting, headings, code ticks, or list markers.`;
 
 function getSystemPrompt(purpose: AgentPlanningPurpose) {
@@ -972,11 +1163,11 @@ function normalizeLeg(value: unknown): PlannedTripLegInput {
   };
 }
 
-function normalizeCreateTripInput(
+async function normalizeCreateTripInput(
   args: Record<string, unknown>,
   context: ToolExecutionContext,
   settings: PlanningSettings
-): CreatePlannedTripInput {
+): Promise<CreatePlannedTripInput> {
   const travelPlan =
     args.travelPlan === undefined
       ? undefined
@@ -1010,14 +1201,24 @@ function normalizeCreateTripInput(
           legs,
           dateRange: undefined,
         };
+  const travelPlanWithEvidence =
+    context.purpose === "travel" && travelPlan
+      ? await enrichTravelPlanWithToolEvidence(
+          travelPlan,
+          context.sessionId
+        )
+      : travelPlan;
   const normalizedTravelPlan =
     context.purpose === "travel" && travelPlan
       ? addTravelSchedulePitfall(
-          ensureTravelPlanWeatherCoverage(travelPlan, schedule.dateRange),
+          ensureTravelPlanWeatherCoverage(
+            travelPlanWithEvidence!,
+            schedule.dateRange
+          ),
           schedule.legs,
           timezone
         )
-      : travelPlan;
+      : travelPlanWithEvidence;
 
   if (context.purpose === "travel" && normalizedTravelPlan) {
     assertTravelItinerarySchedule({
@@ -1181,14 +1382,24 @@ async function normalizeReplaceRouteInput(
           legs,
           dateRange: undefined,
         };
+  const travelPlanWithEvidence =
+    context.purpose === "travel" && travelPlan
+      ? await enrichTravelPlanWithToolEvidence(
+          travelPlan,
+          context.sessionId
+        )
+      : travelPlan;
   const normalizedTravelPlan =
     context.purpose === "travel" && travelPlan
       ? addTravelSchedulePitfall(
-          ensureTravelPlanWeatherCoverage(travelPlan, schedule.dateRange),
+          ensureTravelPlanWeatherCoverage(
+            travelPlanWithEvidence!,
+            schedule.dateRange
+          ),
           schedule.legs,
           current.trip.timezone
         )
-      : travelPlan;
+      : travelPlanWithEvidence;
 
   if (context.purpose === "travel" && normalizedTravelPlan) {
     assertTravelItinerarySchedule({
@@ -1409,7 +1620,10 @@ async function executeToolCall(
       args.travelPlan === undefined
         ? undefined
         : ensureTravelPlanWeatherCoverage(
-            normalizeTravelPlan(args.travelPlan),
+            await enrichTravelPlanWithToolEvidence(
+              normalizeTravelPlan(args.travelPlan),
+              context.sessionId
+            ),
             parseTravelDateRange(context.prompt) ?? undefined
           );
 
@@ -1524,7 +1738,7 @@ async function executeToolCall(
     });
   }
 
-  const input = normalizeCreateTripInput(args, context, settings);
+  const input = await normalizeCreateTripInput(args, context, settings);
   let createdTripId: string | null = null;
 
   try {

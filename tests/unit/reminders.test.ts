@@ -73,4 +73,27 @@ describe("buildReminderSchedule", () => {
       )
     ).toMatchObject({ kind: "weather_refresh", hoursBeforeDeparture: 72 });
   });
+
+  it("supports a one-hour weather refresh for each later travel leg", () => {
+    const latestDepartAt = new Date("2026-08-09T01:00:00.000Z");
+    const reminders = buildReminderSchedule({
+      tripId: "trip_travel",
+      legId: "leg_second",
+      latestDepartAt,
+      travelWeatherRefreshAt: latestDepartAt,
+      weatherRefreshHoursBeforeDeparture: [1],
+    });
+
+    expect(
+      reminders
+        .filter((reminder) => reminder.kind === "weather_refresh")
+        .map((reminder) => reminder.scheduledFor.toISOString())
+    ).toEqual(["2026-08-09T00:00:00.000Z"]);
+    expect(
+      JSON.parse(
+        reminders.find((reminder) => reminder.kind === "weather_refresh")!
+          .payloadJson
+      )
+    ).toMatchObject({ kind: "weather_refresh", hoursBeforeDeparture: 1 });
+  });
 });

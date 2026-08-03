@@ -545,6 +545,8 @@ describe("sample-aligned UI components", () => {
     expect(html).toContain("旅行规划");
     expect(html).toContain("天气参考");
     expect(html).toContain("自驾天气动态监控已开启");
+    expect(html).toContain("最近天气刷新：未记录");
+    expect(html).toContain("证据：AI建议，出发前核验");
     expect(html).toContain("行程天气与自驾影响");
     expect(html).toContain("自驾路段天气风险");
     expect(html).toContain("自驾方案");

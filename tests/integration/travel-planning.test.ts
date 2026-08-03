@@ -228,9 +228,22 @@ describe("travel planning integration", () => {
       ["2026-08-09 08:00", "2026-08-09 10:54"],
       ["2026-08-11 06:30", "2026-08-11 17:30"],
     ]);
+    const weatherJobs = persisted.reminderJobs.filter(
+      (job) => job.kind === "weather_refresh"
+    );
+    expect(weatherJobs).toHaveLength(6);
     expect(
-      persisted.reminderJobs.filter((job) => job.kind === "weather_refresh")
-    ).toHaveLength(2);
+      weatherJobs.filter((job) => job.legId === persisted.legs[0]?.id)
+    ).toHaveLength(3);
+    for (const leg of persisted.legs.slice(1)) {
+      expect(weatherJobs.filter((job) => job.legId === leg.id)).toHaveLength(1);
+    }
+    expect(
+      weatherJobs
+        .filter((job) => job.legId === persisted.legs[0]?.id)
+        .map((job) => JSON.parse(job.payloadJson).hoursBeforeDeparture)
+        .sort((left, right) => left - right)
+    ).toEqual([1, 24, 72]);
     expect(JSON.parse(persisted.travelPlanJson ?? "{}")).toMatchObject({
       budget: { total: "¥3,000-4,500/车" },
       pitfalls: expect.arrayContaining([

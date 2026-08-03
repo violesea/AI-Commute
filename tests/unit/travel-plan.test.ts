@@ -143,6 +143,41 @@ describe("travel plan normalization", () => {
         }),
       ])
     );
+    expect(normalizeTravelPlan(sampleTravelPlan).attractions[0].evidence).toMatchObject(
+      {
+        source: "agent_inference",
+        status: "needs_verification",
+        label: "AI建议，出发前核验",
+      }
+    );
+    expect(normalizeTravelPlan(sampleTravelPlan).lodging[0].evidence).toMatchObject(
+      {
+        source: "agent_inference",
+        status: "needs_verification",
+      }
+    );
+  });
+
+  it("preserves provider evidence while keeping verification visible", () => {
+    const normalized = normalizeTravelPlan({
+      ...sampleTravelPlan,
+      attractions: [
+        {
+          ...sampleTravelPlan.attractions[0],
+          evidence: {
+            source: "amap_poi",
+            observedAt: "2026-08-01T02:00:00.000Z",
+          },
+        },
+        ...sampleTravelPlan.attractions.slice(1),
+      ],
+    });
+
+    expect(normalized.attractions[0].evidence).toMatchObject({
+      source: "amap_poi",
+      status: "provider_reference",
+      observedAt: "2026-08-01T02:00:00.000Z",
+    });
   });
 
   it("requires a broad natural-attraction candidate set for travel creation", () => {
