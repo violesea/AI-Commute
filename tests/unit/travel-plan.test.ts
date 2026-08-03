@@ -253,6 +253,52 @@ describe("travel plan normalization", () => {
     ).toThrow("不同类型");
   });
 
+  it("counts every declared type in compound natural attraction labels", () => {
+    const plan = normalizeTravelPlan({
+      ...sampleTravelPlan,
+      days: 5,
+      attractions: [
+        {
+          name: "平顶山锡林郭勒草原火山地质公园",
+          category: "natural",
+          naturalType: "火山/地质台地",
+          reason: "火山地质景观与草原结合",
+        },
+        {
+          name: "锡林河国家湿地公园",
+          category: "natural",
+          naturalType: "湿地/河流",
+          reason: "芦苇水鸟生态",
+        },
+        {
+          name: "锡林九曲湾旅游区",
+          category: "natural",
+          naturalType: "河流/草原湿地",
+          reason: "河流与草原湿地地貌",
+        },
+        {
+          name: "上都湖",
+          category: "natural",
+          naturalType: "湖泊/草原湖",
+          reason: "草原湖泊风光",
+        },
+        {
+          name: "金莲川草原",
+          category: "natural",
+          naturalType: "草原",
+          reason: "草原花海",
+        },
+        {
+          name: "元上都遗址",
+          category: "cultural",
+          reason: "元朝历史遗址",
+        },
+      ],
+    });
+
+    expect(() => assertTravelPlanAttractionCoverage(plan)).not.toThrow();
+  });
+
   it("requires operational weather, route, lodging, food, and pitfall evidence", () => {
     const validPlan = normalizeTravelPlan({
       ...sampleTravelPlan,

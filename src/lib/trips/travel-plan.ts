@@ -749,6 +749,7 @@ const NATURAL_TYPE_PATTERNS = [
   ["grassland", /草原|草甸|牧场/],
   ["forest", /森林|林场|原始林/],
   ["coast", /海|海岸|海滨|海岛|海滩|滨海|湾/],
+  ["river", /河流|河道|水系|溪流|江/],
   ["canyon", /峡谷|沟|峪|河谷/],
   ["waterfall", /瀑布|飞瀑/],
   ["mountain", /山|峰|岭|山口/],
@@ -756,21 +757,19 @@ const NATURAL_TYPE_PATTERNS = [
   ["viewpoint", /观景台|观景|台地|草原天路/],
 ] as const;
 
-function naturalAttractionType(attraction: TravelAttraction) {
-  const text = [
-    attraction.naturalType,
-    attraction.name,
-    attraction.reason,
-    attraction.notes,
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
+function naturalAttractionTypes(attraction: TravelAttraction) {
+  const explicitType = attraction.naturalType?.trim();
+  const text = (
+    explicitType ??
+    [attraction.name, attraction.reason, attraction.notes]
+      .filter(Boolean)
+      .join(" ")
+  ).toLowerCase();
+  const types = NATURAL_TYPE_PATTERNS.filter(([, pattern]) =>
+    pattern.test(text)
+  ).map(([type]) => type);
 
-  return (
-    NATURAL_TYPE_PATTERNS.find(([, pattern]) => pattern.test(text))?.[0] ??
-    "other"
-  );
+  return types.length > 0 ? types : (["other"] as const);
 }
 
 export function assertTravelPlanAttractionCoverage(plan: TravelPlan) {
@@ -795,12 +794,13 @@ export function assertTravelPlanAttractionCoverage(plan: TravelPlan) {
   const naturalTypes = new Set(
     plan.attractions
       .filter((attraction) => attraction.category === "natural")
-      .map(naturalAttractionType)
+      .flatMap(naturalAttractionTypes)
   );
   const requiredNaturalTypeCount = naturalCount >= 4 ? 3 : 2;
   if (naturalTypes.size < requiredNaturalTypeCount) {
+    const detectedTypes = [...naturalTypes].join("、") || "未识别";
     throw new Error(
-      `旅行规划的自然景观至少需要覆盖 ${requiredNaturalTypeCount} 种不同类型（例如湖泊、山地、森林、湿地或草原），当前只有 ${naturalTypes.size} 种。请扩大自然景观搜索范围后重试。`
+      `旅行规划的自然景观至少需要覆盖 ${requiredNaturalTypeCount} 种不同类型（例如湖泊、山地、森林、湿地或草原），当前只有 ${naturalTypes.size} 种（已识别：${detectedTypes}）。请扩大自然景观搜索范围后重试。`
     );
   }
 }
