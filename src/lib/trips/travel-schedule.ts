@@ -308,7 +308,7 @@ function isExplicitScheduleSafe(
 
   let previousArrival: Date | undefined;
 
-  for (const leg of input.legs) {
+  for (const [index, leg] of input.legs.entries()) {
     const latestDepartAt = leg.latestDepartAt!;
     const targetArriveAt = leg.targetArriveAt!;
     const departureDate = formatInTimeZone(
@@ -325,9 +325,31 @@ function isExplicitScheduleSafe(
       (targetArriveAt.getTime() - latestDepartAt.getTime()) / 60_000
     );
 
+    const previousLeg = input.legs[index - 1];
+    const previousDestinationIndex = previousLeg
+      ? findDestinationStopIndex(
+          input.stops,
+          previousLeg,
+          Math.min(index, input.stops.length - 1)
+        )
+      : -1;
+    const requiredStopStayMinutes =
+      previousDestinationIndex >= 0
+        ? Math.max(
+            0,
+            Math.round(
+              input.stops[previousDestinationIndex]?.plannedStayMin ?? 0
+            )
+          )
+        : 0;
+    const earliestNextDeparture = previousArrival
+      ? addMinutes(previousArrival, requiredStopStayMinutes)
+      : undefined;
+
     if (
       targetArriveAt <= latestDepartAt ||
       (previousArrival && latestDepartAt < previousArrival) ||
+      (earliestNextDeparture && latestDepartAt < earliestNextDeparture) ||
       departureDate !== arrivalDate ||
       departureDate < dateRange.startDate ||
       departureDate > dateRange.endDate ||

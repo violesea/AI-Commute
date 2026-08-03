@@ -244,6 +244,55 @@ describe("travel itinerary schedule", () => {
     ]);
   });
 
+  it("rebases an explicit schedule when it skips a stop's planned stay", () => {
+    const result = normalizeTravelItinerarySchedule({
+      prompt: "请规划2026年8月8日至12日北京出发的锡林郭勒自驾旅行",
+      timezone: "Asia/Shanghai",
+      stops: [
+        { order: 0, name: "北京", kind: "origin", plannedStayMin: 0 },
+        {
+          order: 1,
+          name: "贝子庙",
+          kind: "cultural",
+          plannedStayMin: 90,
+        },
+        { order: 2, name: "宝昌镇", kind: "lodging", plannedStayMin: 0 },
+      ],
+      legs: [
+        {
+          order: 0,
+          originName: "北京",
+          destinationName: "贝子庙",
+          routeMinutes: 60,
+          totalMinutes: 60,
+          latestDepartAt: new Date("2026-08-08T00:00:00.000Z"),
+          targetArriveAt: new Date("2026-08-08T01:00:00.000Z"),
+          mode: "driving",
+          segmentTitle: "D1 到达贝子庙",
+        },
+        {
+          order: 1,
+          originName: "贝子庙",
+          destinationName: "宝昌镇",
+          routeMinutes: 60,
+          totalMinutes: 60,
+          latestDepartAt: new Date("2026-08-08T01:00:00.000Z"),
+          targetArriveAt: new Date("2026-08-08T02:00:00.000Z"),
+          mode: "driving",
+          segmentTitle: "D1 离开贝子庙",
+        },
+      ],
+    });
+
+    expect(result.legs.map((leg) => [
+      localTime(leg.latestDepartAt),
+      localTime(leg.targetArriveAt),
+    ])).toEqual([
+      ["2026-08-08 07:00", "2026-08-08 08:00"],
+      ["2026-08-08 09:30", "2026-08-08 10:30"],
+    ]);
+  });
+
   it("recognizes English Day markers when grouping route legs by calendar day", () => {
     const result = normalizeTravelItinerarySchedule({
       prompt: "请规划2026-08-08至2026-08-12北京出发的自驾旅行",
