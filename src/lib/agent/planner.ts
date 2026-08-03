@@ -43,6 +43,7 @@ import type {
 import {
   assertTravelPlanAttractionCoverage,
   assertTravelPlanBudget,
+  ensureTravelPlanWeatherCoverage,
   normalizeTravelPlan,
   parseTravelPlanJson,
 } from "@/lib/trips/travel-plan";
@@ -50,6 +51,7 @@ import {
   addTravelSchedulePitfall,
   assertTravelItinerarySchedule,
   normalizeTravelItinerarySchedule,
+  parseTravelDateRange,
 } from "@/lib/trips/travel-schedule";
 import type { AgentPlanningPurpose } from "@/lib/agent/types";
 
@@ -1006,10 +1008,15 @@ function normalizeCreateTripInput(
           targetArriveAt: initialTargetArriveAt,
           stops,
           legs,
+          dateRange: undefined,
         };
   const normalizedTravelPlan =
     context.purpose === "travel" && travelPlan
-      ? addTravelSchedulePitfall(travelPlan, schedule.legs, timezone)
+      ? addTravelSchedulePitfall(
+          ensureTravelPlanWeatherCoverage(travelPlan, schedule.dateRange),
+          schedule.legs,
+          timezone
+        )
       : travelPlan;
 
   if (context.purpose === "travel" && normalizedTravelPlan) {
@@ -1171,11 +1178,12 @@ async function normalizeReplaceRouteInput(
           targetArriveAt: initialTargetArriveAt,
           stops,
           legs,
+          dateRange: undefined,
         };
   const normalizedTravelPlan =
     context.purpose === "travel" && travelPlan
       ? addTravelSchedulePitfall(
-          travelPlan,
+          ensureTravelPlanWeatherCoverage(travelPlan, schedule.dateRange),
           schedule.legs,
           current.trip.timezone
         )
@@ -1398,7 +1406,10 @@ async function executeToolCall(
     const travelPlan =
       args.travelPlan === undefined
         ? undefined
-        : normalizeTravelPlan(args.travelPlan);
+        : ensureTravelPlanWeatherCoverage(
+            normalizeTravelPlan(args.travelPlan),
+            parseTravelDateRange(context.prompt) ?? undefined
+          );
 
     if (context.purpose === "travel" && travelPlan) {
       assertTravelPlanAttractionCoverage(travelPlan);

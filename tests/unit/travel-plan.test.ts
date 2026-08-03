@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assertTravelPlanAttractionCoverage,
+  ensureTravelPlanWeatherCoverage,
   normalizeTravelPlan,
   parseTravelPlanJson,
 } from "@/lib/trips/travel-plan";
@@ -156,6 +157,34 @@ describe("travel plan normalization", () => {
         ),
       })
     ).toThrow("至少需要 3 个自然景观");
+  });
+
+  it("fills missing weather entries for every itinerary date", () => {
+    const plan = normalizeTravelPlan(sampleTravelPlan);
+    const covered = ensureTravelPlanWeatherCoverage(plan, {
+      startDate: "2026-08-08",
+      endDate: "2026-08-11",
+    });
+
+    expect(covered.weather.forecast?.slice(0, 4).map((item) => item.date)).toEqual([
+      "2026-08-08",
+      "2026-08-09",
+      "2026-08-10",
+      "2026-08-11",
+    ]);
+    expect(covered.weather.forecast).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          date: "2026-08-10",
+          summary: "当前预报未覆盖该日期，天气未知；出发前刷新",
+          risk: "medium",
+        }),
+        expect.objectContaining({
+          date: "2026-08-03",
+          summary: "多云，24°C",
+        }),
+      ])
+    );
   });
 
   it("rejects incomplete plans and safely hides invalid persisted JSON", () => {

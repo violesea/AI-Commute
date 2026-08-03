@@ -114,6 +114,11 @@ export type TravelPlan = {
   pitfalls: TravelPitfall[];
 };
 
+export type TravelWeatherDateRange = {
+  startDate: string;
+  endDate: string;
+};
+
 function readRecord(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be an object.`);
@@ -445,6 +450,75 @@ export function normalizeTravelPlan(value: unknown): TravelPlan {
     lodging: readArray(record, "lodging", "travelPlan").map(normalizeLodging),
     food: readArray(record, "food", "travelPlan").map(normalizeFood),
     pitfalls: readArray(record, "pitfalls", "travelPlan").map(normalizePitfall),
+  };
+}
+
+function enumerateDateKeys(dateRange: TravelWeatherDateRange) {
+  const start = new Date(`${dateRange.startDate}T00:00:00Z`);
+  const end = new Date(`${dateRange.endDate}T00:00:00Z`);
+
+  if (
+    Number.isNaN(start.getTime()) ||
+    Number.isNaN(end.getTime()) ||
+    end < start
+  ) {
+    return [];
+  }
+
+  const dates: string[] = [];
+  const cursor = new Date(start);
+
+  while (cursor <= end && dates.length <= 31) {
+    dates.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  return dates;
+}
+
+export function ensureTravelPlanWeatherCoverage(
+  plan: TravelPlan,
+  dateRange?: TravelWeatherDateRange
+) {
+  if (!dateRange) {
+    return plan;
+  }
+
+  const itineraryDates = enumerateDateKeys(dateRange);
+  if (itineraryDates.length === 0) {
+    return plan;
+  }
+
+  const forecast = plan.weather.forecast ?? [];
+  const forecastByDate = new Map<string, TravelWeatherForecast>();
+  for (const item of forecast) {
+    if (item.date && !forecastByDate.has(item.date)) {
+      forecastByDate.set(item.date, item);
+    }
+  }
+
+  const itineraryForecast = itineraryDates.map(
+    (date): TravelWeatherForecast =>
+      forecastByDate.get(date) ?? {
+        date,
+        location: plan.weather.city,
+        summary: "当前预报未覆盖该日期，天气未知；出发前刷新",
+        risk: "medium",
+        drivingAdvice: "出发前刷新天气和路况，再决定当天的自驾时段",
+        outdoorAdvice: "根据刷新后的降雨和大风预警调整户外景点",
+      }
+  );
+  const itineraryDateSet = new Set(itineraryDates);
+  const referenceForecast = forecast.filter(
+    (item) => !item.date || !itineraryDateSet.has(item.date)
+  );
+
+  return {
+    ...plan,
+    weather: {
+      ...plan.weather,
+      forecast: [...itineraryForecast, ...referenceForecast],
+    },
   };
 }
 
