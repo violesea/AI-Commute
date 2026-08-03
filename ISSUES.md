@@ -5,7 +5,7 @@ skills_used:
 model_used: GPT-5
 model_source: visible_runtime
 created_at: 2026-08-03T00:00:00+08:00
-updated_at: 2026-08-04T00:18:52+08:00
+updated_at: 2026-08-04T01:29:37+08:00
 updated_by: codex
 ---
 
@@ -18,6 +18,8 @@ updated_by: codex
 验收：旅行模式创建结构化 `travelPlan`；自然景观四日行程至少四个；天气缺少未来预报时明确标注未知；路线监控可继续复查。
 
 验证：2026-08-03 在 `http://192.168.1.56:3002/` 实际创建行程 `cmscyir8f001gnw0s8v75bzvz`，会话 `cmscybkyi0005nw0s36kwhywj` 终态为 `completed`。数据库真实落盘 5 个自然景点、1 个人文景点、4 个行程日天气条目、3 个住宿、3 个美食、预算、避坑、自驾/公共交通对比和 2 个 `weather_refresh` 任务。天气预报窗口不覆盖 8 月 8-11 日时，四天均明确写为未知并要求出发前刷新。
+
+追加验证：2026-08-04 当前部署真实创建会话 `cmsdi149w0001pd0tomcbz4mw`，行程 `cmsdi4hbw001qpd0td84ev5xx` 终态为 `completed`，行程状态为 `monitoring`。页面落盘 6 个自然景点、3 个人文景点、4 个住宿、4 个美食、预算、7 条避坑、10 段自驾和 12 个天气刷新任务；每日自驾为 307、170、45、170、287 分钟，全部低于 360 分钟。天气当前仅覆盖到 8 月 7 日，8 月 8-12 日均标记为待刷新。
 
 ## ISSUE-002 · bug · P1 · done
 
@@ -44,6 +46,8 @@ updated_by: codex
 验收：设置页可选择通勤模型；明确显示旅行规划固定使用 `deepseek-v4-flash`；点击“测试当前模型接入”后由服务器使用环境变量发起最小请求；页面不显示 API Key；未配置或请求失败时返回可读状态。
 
 验证：模型测试 API 5/5、设置页 UI 76/76；本次部署后线上 `/settings` 实测显示“通勤规划模型”和“旅行规划模型：DeepSeek V4 Flash”，`/api/settings/test-model` 返回 `connected`，`deepseek-v4-flash` 实际连通 846ms；页面未显示 API Key 或 Base URL。
+
+追加验证：2026-08-04 浏览器实测可展开 3 个通勤模型选项（GPT-4o mini、DeepSeek V4 Flash、DeepSeek V4 Pro）；旅行模型固定为 `deepseek-v4-flash`，旅行接入测试返回“接入成功”，耗时 1108ms。页面未显示 API Key 或 Base URL。
 
 ## ISSUE-006 · quality · P1 · done
 
@@ -120,3 +124,13 @@ updated_by: codex
 证据：线上行程 `cmsdfcr1f0028mp0ttkw88qq7` 的路线分段标题已正确显示 8 月 8 日 07:00、11:30 等北京时间；同一段说明仍出现“按行程结构化时间-按行程结构化时间游览”等归一化文本。
 
 验收：保留服务端结构化时间作为唯一事实源，同时将路线说明改为实际时间或自然的中性表述，不再向用户展示内部占位短语。
+
+补充证据：2026-08-04 当前实跑中结构化日期和时间均可读，未复现该占位短语；ISSUE-014 仍保留开放，需继续覆盖更多模型输出。
+
+## ISSUE-015 · quality · P2 · open
+
+复杂旅行请求在结构化 `create_trip` 首次参数不完整时仍需模型自行重试，影响首次响应时间。
+
+证据：2026-08-04 会话 `cmsdi149w0001pd0tomcbz4mw` 首次 `create_trip` 因缺少结构化 `travelPlan` 被服务端拒绝，模型第二次才成功创建行程 `cmsdi4hbw001qpd0td84ev5xx`。安全校验正确阻止了半成品落盘，但重试成本仍存在。
+
+验收：在不放宽旅行计划结构化校验的前提下，减少模型重复构造参数的次数，或提供更明确的机器可读修正反馈。
