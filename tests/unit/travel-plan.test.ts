@@ -3,6 +3,7 @@ import {
   alignTravelPlanAttractionsWithRoute,
   assertTravelPlanAttractionCoverage,
   assertTravelPlanOperationalCompleteness,
+  completeTravelPlanArrayPayload,
   completeTravelPlanTransportPayload,
   ensureTravelPlanWeatherCoverage,
   getTravelRouteStats,
@@ -182,6 +183,37 @@ describe("travel plan normalization", () => {
         durationMinutes: 58,
         route: "公交路线：北京到东钱湖",
       },
+    });
+  });
+
+  it("recovers recommendation arrays flattened beside travelPlan", () => {
+    const flattened = {
+      ...sampleTravelPlan,
+      attractions: undefined,
+      lodging: undefined,
+      food: undefined,
+      pitfalls: undefined,
+    };
+    const completed = completeTravelPlanArrayPayload(flattened, {
+      attractions: sampleTravelPlan.attractions,
+      lodging: sampleTravelPlan.lodging,
+      food: sampleTravelPlan.food,
+      pitfalls: sampleTravelPlan.pitfalls,
+    });
+
+    expect(normalizeTravelPlan(completed)).toMatchObject({
+      attractions: expect.arrayContaining([
+        expect.objectContaining({ name: "东钱湖" }),
+      ]),
+      lodging: expect.arrayContaining([
+        expect.objectContaining({ name: "市中心住宿区" }),
+      ]),
+      food: expect.arrayContaining([
+        expect.objectContaining({ name: "宁波本帮菜" }),
+      ]),
+      pitfalls: expect.arrayContaining([
+        expect.objectContaining({ title: "提前预约" }),
+      ]),
     });
   });
 

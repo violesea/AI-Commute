@@ -50,6 +50,7 @@ import {
   assertTravelPlanAttractionCoverage,
   assertTravelPlanBudget,
   assertTravelPlanOperationalCompleteness,
+  completeTravelPlanArrayPayload,
   completeTravelPlanTransportPayload,
   ensureTravelPlanWeatherCoverage,
   normalizeTravelPlan,
@@ -1467,15 +1468,28 @@ async function normalizeTravelPlanForContext(
   }
 }
 
+function completeTravelPlanArgument(args: Record<string, unknown>) {
+  return completeTravelPlanArrayPayload(args.travelPlan, {
+    attractions: args.attractions,
+    lodging: args.lodging,
+    food: args.food,
+    pitfalls: args.pitfalls,
+  });
+}
+
 async function normalizeCreateTripInput(
   args: Record<string, unknown>,
   context: ToolExecutionContext,
   settings: PlanningSettings
 ): Promise<CreatePlannedTripInput> {
-  let travelPlan =
+  const travelPlanArgument =
     args.travelPlan === undefined
       ? undefined
-      : await normalizeTravelPlanForContext(args.travelPlan, context);
+      : completeTravelPlanArgument(args);
+  let travelPlan =
+    travelPlanArgument === undefined
+      ? undefined
+      : await normalizeTravelPlanForContext(travelPlanArgument, context);
 
   if (context.purpose === "travel" && !travelPlan) {
     throw new Error("旅行规划必须提供结构化 travelPlan。");
@@ -1687,7 +1701,10 @@ async function normalizeReplaceRouteInput(
   let travelPlan =
     args.travelPlan === undefined
       ? parseTravelPlanJson(current.trip.travelPlanJson)
-      : await normalizeTravelPlanForContext(args.travelPlan, context);
+      : await normalizeTravelPlanForContext(
+          completeTravelPlanArgument(args),
+          context
+        );
 
   if (context.purpose === "travel" && travelPlan) {
     assertTravelPlanAttractionCoverage(travelPlan);
@@ -2009,7 +2026,7 @@ async function executeToolCall(
         ? undefined
         : ensureTravelPlanWeatherCoverage(
             await enrichTravelPlanWithToolEvidence(
-              normalizeTravelPlan(args.travelPlan),
+              normalizeTravelPlan(completeTravelPlanArgument(args)),
               context.sessionId
             ),
             parseTravelDateRange(context.prompt) ?? undefined

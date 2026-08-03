@@ -237,6 +237,102 @@ describe("travel planning integration", () => {
     });
   });
 
+  it("persists recommendation arrays when the model flattens them beside travelPlan", async () => {
+    const user = await prisma.user.create({
+      data: {
+        email: `travel-array-fallback-${Date.now()}@example.com`,
+        name: "旅行数组兼容用户",
+        passwordHash: "hash",
+        settings: {
+          create: {
+            defaultCity: "北京",
+            timezone: "Asia/Shanghai",
+            originName: "北京",
+            originLngLat: "116.4,39.9",
+            routePreference: "balanced",
+          },
+        },
+      },
+    });
+    const session = await startPlanningSession({
+      userId: user.id,
+      purpose: "travel",
+      prompt: "请规划 2026 年 8 月 8 日北京到锡林郭勒的一日自驾旅行。",
+    });
+    const chatClient: AgentChatClient = {
+      async complete() {
+        return {
+          message: {
+            role: "assistant",
+            content: "已完成旅行规划。",
+            toolCalls: [
+              {
+                id: "array-fallback-create",
+                name: "create_trip",
+                arguments: {
+                  title: "北京到锡林郭勒",
+                  timezone: "Asia/Shanghai",
+                  finalStopName: "锡林郭勒",
+                  stops: [
+                    { order: 0, name: "北京", kind: "origin" },
+                    { order: 1, name: "锡林郭勒", kind: "destination" },
+                  ],
+                  legs: [
+                    {
+                      order: 0,
+                      originName: "北京",
+                      destinationName: "锡林郭勒",
+                      routeMinutes: 36,
+                      totalMinutes: 36,
+                      bufferComponents: [],
+                      mode: "driving",
+                      segmentTitle: "D1·去程",
+                    },
+                  ],
+                  travelPlan: {
+                    ...travelPlan,
+                    attractions: undefined,
+                    lodging: undefined,
+                    food: undefined,
+                    pitfalls: undefined,
+                  },
+                  attractions: travelPlan.attractions,
+                  lodging: travelPlan.lodging,
+                  food: travelPlan.food,
+                  pitfalls: travelPlan.pitfalls,
+                },
+              },
+            ],
+          },
+        };
+      },
+    };
+
+    const result = await runPlanningSession(session.id, {
+      amapClient: createMockAmapClient(),
+      chatClient,
+    });
+
+    expect(result.status).toBe("completed");
+    const persisted = await prisma.trip.findUniqueOrThrow({
+      where: { id: result.tripId! },
+    });
+    expect(JSON.parse(persisted.travelPlanJson ?? "{}")).toMatchObject({
+      attractions: expect.arrayContaining([
+        expect.objectContaining({ name: "上都湖" }),
+      ]),
+      lodging: expect.arrayContaining([
+        expect.objectContaining({ name: "正蓝旗酒店" }),
+      ]),
+      food: expect.arrayContaining([
+        expect.objectContaining({ name: "锡林浩特涮羊肉" }),
+      ]),
+      pitfalls: expect.arrayContaining([
+        expect.objectContaining({ title: "天气待核实" }),
+      ]),
+    });
+  });
+
   it("nudges the model to converge after the direct POI budget is exhausted", async () => {
     const user = await prisma.user.create({
       data: {

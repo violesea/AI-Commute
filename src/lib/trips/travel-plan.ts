@@ -921,6 +921,33 @@ export function completeTravelPlanTransportPayload(
   };
 }
 
+const TRAVEL_PLAN_ARRAY_FIELDS = [
+  "attractions",
+  "lodging",
+  "food",
+  "pitfalls",
+] as const;
+
+/**
+ * Recover the recommendation arrays when a model flattens them alongside
+ * travelPlan even though the tool contract nests them inside travelPlan.
+ */
+export function completeTravelPlanArrayPayload(
+  value: unknown,
+  fallback: Partial<Record<(typeof TRAVEL_PLAN_ARRAY_FIELDS)[number], unknown>>
+) {
+  const plan = readRecord(value, "travelPlan");
+  const completed = { ...plan };
+
+  for (const field of TRAVEL_PLAN_ARRAY_FIELDS) {
+    if (!Array.isArray(completed[field]) && Array.isArray(fallback[field])) {
+      completed[field] = fallback[field];
+    }
+  }
+
+  return completed;
+}
+
 function enumerateDateKeys(dateRange: TravelWeatherDateRange) {
   const start = new Date(`${dateRange.startDate}T00:00:00Z`);
   const end = new Date(`${dateRange.endDate}T00:00:00Z`);
