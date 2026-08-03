@@ -1,6 +1,7 @@
 ---
 skills_used:
   - github:github
+  - github:yeet
   - browser:control-in-app-browser
 model_used: GPT-5
 model_source: visible_runtime
