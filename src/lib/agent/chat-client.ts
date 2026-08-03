@@ -55,6 +55,8 @@ export type AgentChatClient = {
 
 type EnvSource = Partial<Record<string, string | undefined>>;
 
+const AGENT_MAX_OUTPUT_TOKENS = 32768;
+
 function parseToolArguments(value: string | null | undefined) {
   if (!value) return { arguments: {} };
 
@@ -136,6 +138,7 @@ export function createOpenAiChatClient(
             },
           })),
           tool_choice: input.toolChoice ?? "auto",
+          max_tokens: AGENT_MAX_OUTPUT_TOKENS,
         },
         { signal: input.signal }
       );

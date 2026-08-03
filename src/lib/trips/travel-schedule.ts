@@ -215,6 +215,23 @@ function legText(leg: PlannedTripLegInput) {
     .join(" ");
 }
 
+const EXPLICIT_CLOCK_PATTERNS = [
+  /(?:(?:凌晨|清晨|早上|上午|中午|下午|傍晚|晚上|夜间)\s*)?(?:[01]?\d|2[0-3])[:：][0-5]\d/g,
+  /(?:(?:凌晨|清晨|早上|上午|中午|下午|傍晚|晚上|夜间)\s*)?(?:[01]?\d|2[0-3])\s*(?:点|时)(?:\s*[0-5]?\d\s*分)?/g,
+] as const;
+
+function normalizeScheduledText(value?: string) {
+  if (!value) return value;
+
+  return EXPLICIT_CLOCK_PATTERNS.reduce(
+    (text, pattern) => text.replace(pattern, "按行程结构化时间"),
+    value
+  )
+    .replace(/按行程结构化时间\s+/g, "按行程结构化时间")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
 function isReturnLeg(leg: PlannedTripLegInput) {
   return /返程|返京|回北京|返回北京|回程/.test(legText(leg));
 }
@@ -349,6 +366,10 @@ export function normalizeTravelItinerarySchedule(
 
     const scheduledLeg = {
       ...leg,
+      routeTitle: normalizeScheduledText(leg.routeTitle),
+      routeRationale: normalizeScheduledText(leg.routeRationale),
+      segmentTitle: normalizeScheduledText(leg.segmentTitle),
+      segmentDetail: normalizeScheduledText(leg.segmentDetail),
       latestDepartAt,
       targetArriveAt,
     };

@@ -1,6 +1,23 @@
-import { describe, expect, it } from "vitest";
-import { createFallbackChatClient } from "@/lib/agent/chat-client";
+import { describe, expect, it, vi } from "vitest";
+import {
+  createFallbackChatClient,
+  createOpenAiChatClient,
+} from "@/lib/agent/chat-client";
 import type { AgentChatMessage } from "@/lib/agent/chat-client";
+
+const { completionMock } = vi.hoisted(() => ({
+  completionMock: vi.fn(),
+}));
+
+vi.mock("openai", () => ({
+  default: class MockOpenAI {
+    chat = {
+      completions: {
+        create: completionMock,
+      },
+    };
+  },
+}));
 
 describe("createFallbackChatClient", () => {
   it("creates a complete travel plan after comparing driving and transit", async () => {
@@ -157,5 +174,36 @@ describe("createFallbackChatClient", () => {
     expect(leg?.originLngLat).toBe("");
     expect(leg?.routeTitle).not.toContain("家");
     expect(leg?.routeTitle).not.toContain("121.5230315924,29.8652491273");
+  });
+});
+
+describe("createOpenAiChatClient", () => {
+  it("requests enough output for long structured travel tool calls", async () => {
+    completionMock.mockResolvedValueOnce({
+      choices: [{ message: { content: "已完成" } }],
+    });
+
+    const client = createOpenAiChatClient({
+      OPENAI_API_KEY: "test-key",
+      OPENAI_BASE_URL: "https://api.deepseek.com/v1",
+    });
+
+    await client.complete({
+      messages: [{ role: "user", content: "规划五天旅行" }],
+      tools: [
+        {
+          name: "create_trip",
+          description: "Create a trip",
+          parameters: { type: "object" },
+        },
+      ],
+      model: "deepseek-v4-flash",
+    });
+
+    expect(completionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ max_tokens: 32768 }),
+      expect.objectContaining({ signal: undefined })
+    );
+    completionMock.mockReset();
   });
 });

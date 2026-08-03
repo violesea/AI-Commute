@@ -128,6 +128,35 @@ describe("travel itinerary schedule", () => {
     ])).toEqual([["2026-08-08 07:00", "2026-08-08 14:38"]]);
   });
 
+  it("removes model clock text that can contradict the structured itinerary", () => {
+    const result = normalizeTravelItinerarySchedule({
+      prompt: "请规划2026年8月8日至11日北京出发、锡林郭勒盟自驾4天3晚的旅行",
+      timezone: "Asia/Shanghai",
+      stops: [
+        { order: 0, name: "南山森林公园", kind: "origin" },
+        { order: 1, name: "太仆寺旗宝昌镇", kind: "destination" },
+      ],
+      legs: [
+        {
+          order: 0,
+          originName: "南山森林公园",
+          destinationName: "太仆寺旗宝昌镇",
+          routeMinutes: 193,
+          mode: "driving",
+          segmentTitle: "D4 森林",
+          segmentDetail: "下午14:15抵达宝昌镇，入住休息",
+          routeRationale: "14:15 后再出发会影响返程安排",
+        },
+      ],
+    });
+
+    expect(result.legs[0]).toMatchObject({
+      segmentDetail: "按行程结构化时间抵达宝昌镇，入住休息",
+      routeRationale: "按行程结构化时间后再出发会影响返程安排",
+    });
+    expect(result.legs[0]?.segmentDetail).not.toMatch(/14:15/);
+  });
+
   it("rejects a long self-drive leg that arrives after the local sunset safety line", () => {
     expect(() =>
       assertTravelItinerarySchedule({
