@@ -371,6 +371,16 @@ describe("createOpenAiChatClient", () => {
             additionalProperties: false,
           },
         },
+        {
+          name: "read_settings",
+          description: "Read settings",
+          parameters: {
+            type: "object",
+            properties: {},
+            required: [],
+            additionalProperties: false,
+          },
+        },
       ],
       model: "deepseek-v4-flash",
       purpose: "travel",
@@ -378,6 +388,7 @@ describe("createOpenAiChatClient", () => {
 
     const requestTools = completionMock.mock.calls[0]?.[0]?.tools as Array<{
       function: {
+        name: string;
         strict?: boolean;
         parameters?: {
           required?: string[];
@@ -393,13 +404,16 @@ describe("createOpenAiChatClient", () => {
                 };
               };
             };
+            _value?: { type?: string };
           };
         };
       };
     }>;
-    const parameters = requestTools[0]?.function.parameters;
+    const createTripTool = requestTools[0];
+    const emptyTool = requestTools[1];
+    const parameters = createTripTool?.function.parameters;
 
-    expect(requestTools[0]?.function.strict).toBe(true);
+    expect(createTripTool?.function.strict).toBe(true);
     expect(parameters?.required).toEqual(["travelPlan"]);
     expect(parameters?.properties?.travelPlan?.required).toEqual([
       "destination",
@@ -411,6 +425,10 @@ describe("createOpenAiChatClient", () => {
       expect.objectContaining({ required: ["recommended"] }),
       { type: "null" },
     ]);
+    expect(emptyTool?.function.parameters).toMatchObject({
+      properties: { _value: { type: "string" } },
+      required: ["_value"],
+    });
     completionMock.mockReset();
   });
 });
