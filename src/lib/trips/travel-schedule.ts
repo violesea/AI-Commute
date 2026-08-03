@@ -1,4 +1,5 @@
 import { fromZonedTime, formatInTimeZone } from "date-fns-tz";
+import * as SunCalc from "suncalc";
 import type {
   CreatePlannedTripInput,
   PlannedTripLegInput,
@@ -13,6 +14,8 @@ const DEFAULT_RETURN_DAY_START = { hour: 6, minute: 30 };
 const MAX_DATE_RANGE_DAYS = 31;
 const HIGH_DAILY_DRIVING_MINUTES = 8 * 60;
 const MAX_TRUSTED_MODEL_TOTAL_DELTA_MINUTES = 2 * 60;
+const LONG_DAYLIGHT_DRIVING_MINUTES = 90;
+const DAYLIGHT_SAFETY_BUFFER_MINUTES = 30;
 
 export type TravelDateRange = {
   startDate: string;
@@ -117,7 +120,7 @@ function normalizeDateRange(
 
 export function parseTravelDateRange(prompt: string): TravelDateRange | null {
   const chineseRange = prompt.match(
-    /(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日?\s*(?:至|到|～|~|—|-)\s*(?:(\d{4})年\s*)?(?:(\d{1,2})月\s*)?(\d{1,2})日?/
+    /(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?\s*(?:至|到|～|~|—|-)\s*(?:(\d{4})\s*年\s*)?(?:(\d{1,2})\s*月\s*)?(\d{1,2})\s*日?/
   );
 
   if (chineseRange) {
@@ -382,6 +385,7 @@ export function normalizeTravelItinerarySchedule(
 export function assertTravelItinerarySchedule(input: {
   prompt: string;
   timezone: string;
+  stops?: PlannedTripStopInput[];
   legs: PlannedTripLegInput[];
 }) {
   const dateRange = parseTravelDateRange(input.prompt);
@@ -424,12 +428,196 @@ export function assertTravelItinerarySchedule(input: {
 
     previousArrival = leg.targetArriveAt;
   }
+
+  const daylightViolation = findDaylightDrivingViolation(input);
+  if (daylightViolation) {
+    throw new Error(
+      formatDaylightConstraintError(daylightViolation, input.timezone)
+    );
+  }
 }
 
 function isDrivingLeg(leg: PlannedTripLegInput) {
-  return /drive|car|driving|驾车|自驾/i.test(
-    [leg.mode, leg.routeTitle, leg.segmentTitle].filter(Boolean).join(" ")
+  return /drive|car|driving|驾车|自驾|开车|驾驶|行车/i.test(
+    [
+      leg.mode,
+      leg.routeTitle,
+      leg.routeRationale,
+      leg.segmentTitle,
+      leg.segmentDetail,
+    ]
+      .filter(Boolean)
+      .join(" ")
   );
+}
+
+const DAYLIGHT_DRIVING_PATTERNS = [
+  /白天.{0,12}(?:驾车|驾驶|开车|自驾|行车)/,
+  /(?:驾车|驾驶|开车|自驾|行车).{0,12}白天/,
+  /(?:避免|不走|不安排|不要|不想|不希望|不接受).{0,10}(?:夜间|夜路|晚上|夜车|天黑后)/,
+  /(?:日落|天黑).{0,8}(?:前|之前|前到达)/,
+] as const;
+
+export function requiresDaylightDriving(prompt: string) {
+  return DAYLIGHT_DRIVING_PATTERNS.some((pattern) => pattern.test(prompt));
+}
+
+type Coordinates = {
+  longitude: number;
+  latitude: number;
+};
+
+export type DaylightDrivingViolation = {
+  legIndex: number;
+  route: string;
+  reason: "late_arrival" | "missing_coordinates";
+  arrivalAt?: Date;
+  safeArrivalAt?: Date;
+  sunsetAt?: Date;
+};
+
+function parseLngLat(value?: string | null): Coordinates | null {
+  const parts = value?.split(",").map((part) => Number(part.trim()));
+  if (
+    !parts ||
+    parts.length !== 2 ||
+    parts.some((part) => !Number.isFinite(part)) ||
+    parts[0] < -180 ||
+    parts[0] > 180 ||
+    parts[1] < -90 ||
+    parts[1] > 90
+  ) {
+    return null;
+  }
+
+  return { longitude: parts[0], latitude: parts[1] };
+}
+
+function findStopCoordinate(
+  stops: PlannedTripStopInput[],
+  name?: string,
+  lngLat?: string
+) {
+  return parseLngLat(lngLat) ??
+    parseLngLat(
+      stops.find((stop) => stopMatches(stop, name, lngLat))?.lngLat
+    );
+}
+
+function getSunsetAt(dateKey: string, coordinates: Coordinates, timezone: string) {
+  const localNoon = buildZonedDate(
+    dateKey,
+    { hour: 12, minute: 0 },
+    timezone
+  );
+  const times = SunCalc.getTimes(
+    localNoon,
+    coordinates.latitude,
+    coordinates.longitude
+  );
+  const sunset = times.sunset ?? times.dusk;
+  return sunset instanceof Date && !Number.isNaN(sunset.getTime())
+    ? sunset
+    : undefined;
+}
+
+function daylightViolationRoute(leg: PlannedTripLegInput) {
+  return (
+    [leg.originName, leg.destinationName].filter(Boolean).join(" → ") ||
+    leg.routeTitle ||
+    "未命名路线"
+  );
+}
+
+export function findDaylightDrivingViolation(input: {
+  prompt: string;
+  timezone: string;
+  stops?: PlannedTripStopInput[];
+  legs: PlannedTripLegInput[];
+}): DaylightDrivingViolation | undefined {
+  if (!requiresDaylightDriving(input.prompt)) return undefined;
+
+  for (const [legIndex, leg] of input.legs.entries()) {
+    if (
+      !isDrivingLeg(leg) ||
+      Math.max(0, Math.round(leg.routeMinutes)) < LONG_DAYLIGHT_DRIVING_MINUTES
+    ) {
+      continue;
+    }
+
+    const coordinates = [
+      findStopCoordinate(input.stops ?? [], leg.originName, leg.originLngLat),
+      findStopCoordinate(
+        input.stops ?? [],
+        leg.destinationName,
+        leg.destinationLngLat
+      ),
+    ].filter((value): value is Coordinates => Boolean(value));
+    if (coordinates.length === 0) {
+      return {
+        legIndex,
+        route: daylightViolationRoute(leg),
+        reason: "missing_coordinates",
+      };
+    }
+
+    if (!leg.targetArriveAt) continue;
+    const arrivalDate = formatInTimeZone(
+      leg.targetArriveAt,
+      input.timezone || DEFAULT_TIME_ZONE,
+      "yyyy-MM-dd"
+    );
+    const sunsets = coordinates
+      .map((coordinates) => getSunsetAt(arrivalDate, coordinates, input.timezone))
+      .filter((value): value is Date => Boolean(value));
+    if (sunsets.length === 0) continue;
+
+    const sunsetAt = new Date(
+      Math.min(...sunsets.map((value) => value.getTime()))
+    );
+    const safeArrivalAt = new Date(
+      sunsetAt.getTime() - DAYLIGHT_SAFETY_BUFFER_MINUTES * 60_000
+    );
+    if (leg.targetArriveAt > safeArrivalAt) {
+      return {
+        legIndex,
+        route: daylightViolationRoute(leg),
+        reason: "late_arrival",
+        arrivalAt: leg.targetArriveAt,
+        safeArrivalAt,
+        sunsetAt,
+      };
+    }
+  }
+
+  return undefined;
+}
+
+function formatDaylightConstraintError(
+  violation: DaylightDrivingViolation,
+  timezone: string
+) {
+  const segment = `第 ${violation.legIndex + 1} 段 ${violation.route}`;
+  if (violation.reason === "missing_coordinates") {
+    return `${segment}是长途自驾，但缺少起点或终点坐标，无法计算当地日落。白天驾驶约束不能在缺少坐标时放行，请先补齐 POI 坐标后重新规划。可执行方案：提前返程、增加途中住宿并拆分路线，或缩短/删除远端景点。`;
+  }
+
+  const arrival = formatInTimeZone(
+    violation.arrivalAt!,
+    timezone || DEFAULT_TIME_ZONE,
+    "yyyy-MM-dd HH:mm"
+  );
+  const safeArrival = formatInTimeZone(
+    violation.safeArrivalAt!,
+    timezone || DEFAULT_TIME_ZONE,
+    "yyyy-MM-dd HH:mm"
+  );
+  const sunset = formatInTimeZone(
+    violation.sunsetAt!,
+    timezone || DEFAULT_TIME_ZONE,
+    "HH:mm"
+  );
+  return `${segment}预计 ${arrival} 到达，晚于当地日落 ${sunset} 的安全线 ${safeArrival}（已预留 30 分钟）。用户要求白天驾驶，不能把这段夜间自驾落盘。请重新规划为可执行方案：提前返程并在安全线前到达；或增加途中住宿并拆分路线；或缩短/删除远端景点。`;
 }
 
 export function addTravelSchedulePitfall(

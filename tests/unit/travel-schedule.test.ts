@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { formatInTimeZone } from "date-fns-tz";
 import {
+  assertTravelItinerarySchedule,
   normalizeTravelItinerarySchedule,
   parseTravelDateRange,
 } from "@/lib/trips/travel-schedule";
@@ -14,6 +15,18 @@ function localTime(date: Date | undefined) {
 describe("travel itinerary schedule", () => {
   it("parses a Chinese date range with an omitted end month", () => {
     expect(parseTravelDateRange("请规划2026年8月8日至11日北京出发的旅行")).toEqual({
+      startDate: "2026-08-08",
+      endDate: "2026-08-11",
+      days: 4,
+    });
+  });
+
+  it("parses Chinese date ranges with spaces around date units", () => {
+    expect(
+      parseTravelDateRange(
+        "请规划 2026 年 8 月 8 日至 8 月 11 日北京出发的旅行"
+      )
+    ).toEqual({
       startDate: "2026-08-08",
       endDate: "2026-08-11",
       days: 4,
@@ -113,5 +126,33 @@ describe("travel itinerary schedule", () => {
       localTime(leg.latestDepartAt),
       localTime(leg.targetArriveAt),
     ])).toEqual([["2026-08-08 07:00", "2026-08-08 14:38"]]);
+  });
+
+  it("rejects a long self-drive leg that arrives after the local sunset safety line", () => {
+    expect(() =>
+      assertTravelItinerarySchedule({
+        prompt:
+          "请规划 2026 年 8 月 8 日至 8 月 11 日北京出发、全程白天驾驶的锡林郭勒自驾旅行",
+        timezone: "Asia/Shanghai",
+        stops: [
+          { name: "达里湖", lngLat: "116.47,43.35", kind: "waypoint" },
+          { name: "锡林浩特", lngLat: "116.07,43.93", kind: "destination" },
+        ],
+        legs: [
+          {
+            order: 0,
+            originName: "达里湖",
+            originLngLat: "116.47,43.35",
+            destinationName: "锡林浩特",
+            destinationLngLat: "116.07,43.93",
+            routeMinutes: 150,
+            mode: "driving",
+            latestDepartAt: new Date("2026-08-10T08:40:00.000Z"),
+            targetArriveAt: new Date("2026-08-10T11:10:00.000Z"),
+            segmentTitle: "D3·返回锡林浩特",
+          },
+        ],
+      })
+    ).toThrow(/提前返程.*途中住宿.*缩短\/删除远端景点/);
   });
 });

@@ -8,6 +8,7 @@ import type {
   PlannedTripLegInput,
   PlannedTripStopInput,
 } from "@/lib/trips/types";
+import { assertTravelItinerarySchedule } from "@/lib/trips/travel-schedule";
 
 const DEFAULT_ROUTE_MINUTES = 30;
 const DEFAULT_BUFFER_COMPONENTS: BufferComponentInput[] = [
@@ -83,6 +84,15 @@ function defaultLatestDepartAt(
 
 export async function createPlannedTrip(input: CreatePlannedTripInput) {
   validateInput(input);
+
+  if (input.travelPlan) {
+    assertTravelItinerarySchedule({
+      prompt: input.rawPrompt,
+      timezone: input.timezone,
+      stops: input.stops,
+      legs: input.legs ?? [],
+    });
+  }
 
   return prisma.$transaction(async (tx) => {
     const orderedStops = byInputOrder(input.stops);

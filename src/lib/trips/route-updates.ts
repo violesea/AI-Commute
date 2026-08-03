@@ -9,6 +9,7 @@ import type {
   PlannedTripStopInput,
 } from "@/lib/trips/types";
 import { parseTravelPlanJson, type TravelPlan } from "@/lib/trips/travel-plan";
+import { assertTravelItinerarySchedule } from "@/lib/trips/travel-schedule";
 
 const DEFAULT_ROUTE_MINUTES = 30;
 const DEFAULT_BUFFER_COMPONENTS: BufferComponentInput[] = [
@@ -259,6 +260,16 @@ export async function replaceTripRoute(input: ReplaceTripRouteInput) {
     const lastStop = orderedStops[orderedStops.length - 1];
     const firstLeg = orderedLegs[0];
     const lastLeg = orderedLegs[orderedLegs.length - 1];
+    const travelPlanForValidation =
+      input.travelPlan ?? parseTravelPlanJson(trip.travelPlanJson);
+    if (travelPlanForValidation) {
+      assertTravelItinerarySchedule({
+        prompt: trip.rawPrompt,
+        timezone: trip.timezone,
+        stops: orderedStops,
+        legs: orderedLegs,
+      });
+    }
     const finalStopName =
       input.finalStopName ?? lastLeg?.destinationName ?? lastStop.name;
     const title = normalizeRouteTitle({
