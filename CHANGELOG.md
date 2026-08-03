@@ -6,7 +6,7 @@ skills_used:
 model_used: GPT-5
 model_source: visible_runtime
 created_at: 2026-08-03T00:00:00+08:00
-updated_at: 2026-08-04T06:13:19+08:00
+updated_at: 2026-08-04T06:59:17+08:00
 updated_by: codex
 ---
 
@@ -50,3 +50,5 @@ updated_by: codex
 - 提交 `c59a531` 发布到 `violesea/AI-Commute` 自有分支并重建 `192.168.1.56:3002`；线上真实会话 `cmsds0yjw001tlg0s92r62v7w` 创建行程 `cmsds7g68004elg0sm5s0y7tk`，8 个 stops 与 7 个 legs 连续，ISSUE-018、ISSUE-019、ISSUE-020 完成验收。
 - 第十三次北京→锡林郭勒真实回归完成：每日自驾 226/173/165/215/307 分钟，7 段路线天气风险、9 个天气刷新任务、自驾/公共交通、6 个景点（4 自然、2 人文）、4 个住宿、4 个美食、预算和 10 条避坑均落盘；页面级设置验证显示 3 个通勤模型可选，旅行模型固定 `deepseek-v4-flash`，接入测试成功 630ms。
 - 本次首次旅行请求因 DeepSeek `Premature close` 未落盘，重试后成功；外部模型瞬断和结构化重试成本继续由 ISSUE-010、ISSUE-017 跟踪。
+- 第十四次线上北京→锡林郭勒真实评估完成：行程 `cmsdtr6xg001wqp0s93vnnar5` 以 DeepSeek V4 Flash 成功落盘，D1-D5 自驾 342/234/68/168/252 分钟，天气边界、逐段风险、动态刷新、自驾/公共交通、自然/人文景点、住宿、美食、预算和避坑均可见；景点已安排/备选边界通过。
+- 本次评估登记 `ISSUE-021`（天气卡片行程天数偏移）和 `ISSUE-022`（模型文案与结构化路线事实矛盾、疑似重复 POI），不把当前功能通过误报为内容质量全部通过。
