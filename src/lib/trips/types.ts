@@ -24,7 +24,7 @@ export type NormalizedBufferComponent = {
   source: BufferSource;
 };
 
-export type ReminderKind = "recheck" | "depart_now";
+export type ReminderKind = "recheck" | "depart_now" | "weather_refresh";
 
 export type ReminderJobData = {
   tripId: string;

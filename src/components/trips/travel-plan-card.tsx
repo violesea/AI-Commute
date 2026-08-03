@@ -10,6 +10,7 @@ import {
   Trees,
   TriangleAlert,
   Utensils,
+  Wallet,
 } from "lucide-react";
 import React, { type ReactNode } from "react";
 import { GlassCard } from "@/components/glass-card";
@@ -221,6 +222,57 @@ export function TravelPlanCard({ plan }: { plan: TravelPlan }) {
             </div>
           </div>
         ) : null}
+      </GlassCard>
+
+      <GlassCard className="p-5">
+        <div className="flex items-center gap-2">
+          <Wallet aria-hidden="true" className="size-5 text-[#2563eb]" />
+          <h2 className="text-lg font-bold text-[#191c1e]">预算参考</h2>
+        </div>
+        {plan.budget ? (
+          <>
+            <div className="mt-4 rounded-2xl bg-[#e8f5e9] px-4 py-4">
+              <p className="text-xs font-bold text-[#276749]">预计总计</p>
+              <p className="mt-1 text-2xl font-bold text-[#1f5133]">
+                {plan.budget.total}
+              </p>
+              <p className="mt-1 text-xs font-semibold text-[#4b6b52]">
+                币种：{plan.budget.currency}
+              </p>
+            </div>
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              {plan.budget.breakdown.map((item) => (
+                <article
+                  className="rounded-2xl bg-white/60 p-4"
+                  key={`${item.category}-${item.amount}`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <h3 className="text-sm font-bold text-[#191c1e]">
+                      {item.category}
+                    </h3>
+                    <span className="shrink-0 text-sm font-bold text-[#2563eb]">
+                      {item.amount}
+                    </span>
+                  </div>
+                  {item.notes ? (
+                    <p className="mt-2 text-xs leading-5 text-[#737686]">
+                      {item.notes}
+                    </p>
+                  ) : null}
+                </article>
+              ))}
+            </div>
+            {plan.budget.assumptions ? (
+              <p className="mt-3 rounded-2xl bg-[#f2f4f6] px-4 py-3 text-xs leading-5 text-[#5b6072]">
+                估算口径：{plan.budget.assumptions}
+              </p>
+            ) : null}
+          </>
+        ) : (
+          <p className="mt-4 rounded-2xl bg-[#fff4d6] px-4 py-3 text-sm leading-6 text-[#7a4f00]">
+            当前计划没有总预算，价格信息需要重新核实。
+          </p>
+        )}
       </GlassCard>
 
       <GlassCard className="p-5">

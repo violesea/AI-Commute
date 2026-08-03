@@ -82,6 +82,19 @@ export type TravelFood = {
   notes?: string;
 };
 
+export type TravelBudgetItem = {
+  category: string;
+  amount: string;
+  notes?: string;
+};
+
+export type TravelBudget = {
+  currency: string;
+  total: string;
+  breakdown: TravelBudgetItem[];
+  assumptions?: string;
+};
+
 export type TravelPitfall = {
   title: string;
   detail: string;
@@ -94,6 +107,7 @@ export type TravelPlan = {
   days?: number;
   weather: TravelPlanWeather;
   transport: TravelTransport;
+  budget?: TravelBudget;
   attractions: TravelAttraction[];
   lodging: TravelLodging[];
   food: TravelFood[];
@@ -306,6 +320,49 @@ function normalizeFood(value: unknown): TravelFood {
   };
 }
 
+function normalizeBudgetItem(value: unknown): TravelBudgetItem {
+  const record = readRecord(value, "travelPlan.budget.breakdown[]");
+
+  return {
+    category: readText(
+      record,
+      "category",
+      "travelPlan.budget.breakdown[]"
+    )!,
+    amount: readText(
+      record,
+      "amount",
+      "travelPlan.budget.breakdown[]"
+    )!,
+    notes: readText(
+      record,
+      "notes",
+      "travelPlan.budget.breakdown[]",
+      false
+    ),
+  };
+}
+
+function normalizeBudget(value: unknown): TravelBudget {
+  const record = readRecord(value, "travelPlan.budget");
+
+  return {
+    currency: readText(record, "currency", "travelPlan.budget")!,
+    total: readText(record, "total", "travelPlan.budget")!,
+    breakdown: readArray(
+      record,
+      "breakdown",
+      "travelPlan.budget"
+    ).map(normalizeBudgetItem),
+    assumptions: readText(
+      record,
+      "assumptions",
+      "travelPlan.budget",
+      false
+    ),
+  };
+}
+
 function normalizePitfall(value: unknown): TravelPitfall {
   const record = readRecord(value, "travelPlan.pitfalls[]");
   const severity = readText(record, "severity", "travelPlan.pitfalls[]", false);
@@ -327,6 +384,10 @@ export function normalizeTravelPlan(value: unknown): TravelPlan {
     "recommended",
     "travelPlan.transport"
   );
+  const budget =
+    record.budget === undefined
+      ? undefined
+      : normalizeBudget(record.budget);
 
   return {
     destination: readText(record, "destination", "travelPlan")!,
@@ -377,6 +438,7 @@ export function normalizeTravelPlan(value: unknown): TravelPlan {
         false
       ),
     },
+    budget,
     attractions: readArray(record, "attractions", "travelPlan").map(
       normalizeAttraction
     ),
@@ -407,6 +469,14 @@ export function assertTravelPlanAttractionCoverage(plan: TravelPlan) {
 
   if (culturalCount < 1) {
     throw new Error("旅行规划至少需要 1 个人文景点候选。");
+  }
+}
+
+export function assertTravelPlanBudget(plan: TravelPlan) {
+  if (!plan.budget || plan.budget.breakdown.length === 0) {
+    throw new Error(
+      "旅行规划必须提供总预算和至少一项费用分解；未知价格请明确标注待核实。"
+    );
   }
 }
 

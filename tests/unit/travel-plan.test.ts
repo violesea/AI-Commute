@@ -51,6 +51,15 @@ const sampleTravelPlan = {
     },
     localMovement: "市内景点优先公共交通",
   },
+  budget: {
+    currency: "CNY",
+    total: "¥1,500-2,500/人",
+    breakdown: [
+      { category: "住宿", amount: "¥900-1,200" },
+      { category: "油费与过路费", amount: "¥400-700" },
+    ],
+    assumptions: "按两人同行、不含购物估算",
+  },
   attractions: [
     {
       name: "东钱湖",
@@ -109,6 +118,10 @@ describe("travel plan normalization", () => {
       transport: {
         recommended: "driving",
         driving: { durationMinutes: 36 },
+      },
+      budget: {
+        currency: "CNY",
+        total: "¥1,500-2,500/人",
       },
       weather: {
         dynamicMonitoring: true,

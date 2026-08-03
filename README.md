@@ -1,3 +1,11 @@
+---
+skills_used: []
+model_used: GPT-5
+model_source: visible_runtime
+created_at: 2026-08-03T14:50:00+08:00
+updated_at: 2026-08-03T15:04:00+08:00
+---
+
 # AI Commute
 
 <p align="center">
@@ -8,6 +16,8 @@
 
 <p align="center">
   <a href="#功能亮点">功能亮点</a>
+  ·
+  <a href="#旅行规划">旅行规划</a>
   ·
   <a href="README.en.md">English</a>
   ·
@@ -39,11 +49,28 @@ AI Commute 是一个面向个人通勤场景的智能规划应用。它使用 Ne
 ## 功能亮点
 
 - **AI 路线规划**：从自然语言目标创建 Agent 会话，调用地点、路线、天气和持久化工具生成行程。
+- **旅行规划**：支持日期约束、自驾与公共交通比较、天气路段风险、自然/人文景点理由、住宿、美食、预算和避坑。
+- **动态天气刷新**：旅行首段出发前约 72 小时和 24 小时自动创建天气刷新任务，scheduler 会重新评估路线。
+- **模型配置与接入测试**：设置页可选择通勤规划模型，显示旅行规划固定使用的 `deepseek-v4-flash`，并通过一次最小请求验证服务器 API 接入；密钥和 Base URL 不回传到浏览器。
 - **多段行程与缓冲**：支持路线分段、天气/交通缓冲、最晚出发时间和提醒计划。
 - **行程分享**：创建可撤销的公开只读链接，并生成带二维码、最长不超过 9:16 的 PNG 分享图。
 - **用户级设置**：保存默认城市、默认出发点、通勤偏好、Telegram Chat ID、邮件接收人和路线变化阈值。
 - **通知闭环**：内置 scheduler、Telegram worker、邮件模板和通知发送日志。
 - **部署友好**：支持本机一键启动，也支持 Docker Compose 同时运行 Web、scheduler 和 Telegram worker。
+
+## 旅行规划
+
+首页切换到“旅行”后输入目的地、日期、出发地、出行方式和预算偏好。旅行规划固定使用 `deepseek-v4-flash`；通勤模型可在设置页单独选择。设置页的“模型接入”卡片会显示服务器是否配置 `OPENAI_API_KEY`，并可测试当前选择的模型是否真正可调用。
+
+当用户只提供日期范围而未提供具体时刻时，系统会按白天驾驶重建路线时间，避免模型生成跨午夜或倒序路段。详情页展示每段日期与时间、总预算分项、天气风险和出发前天气刷新任务。
+
+项目管理与工程记录：
+
+- [Issues](ISSUES.md)
+- [Iterations](ITERATIONS.md)
+- [Roadmap](ROADMAP.md)
+- [Engineering Notes](DOCS.md)
+- [Changelog](CHANGELOG.md)
 
 ## 界面截图
 

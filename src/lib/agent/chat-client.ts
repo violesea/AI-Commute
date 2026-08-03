@@ -560,6 +560,32 @@ function buildFallbackTravelPlan(input: {
       },
       localMovement: "市区景点之间优先公共交通，最后一公里根据天气选择步行或短途接驳。",
     },
+    budget: {
+      currency: "CNY",
+      total: "¥800-1,500/人（不含往返大交通）",
+      breakdown: [
+        {
+          category: "住宿",
+          amount: "¥300-600/晚",
+          notes: "按两人入住一间房估算，旺季价格待核实。",
+        },
+        {
+          category: "餐饮",
+          amount: "¥160-300/人/天",
+        },
+        {
+          category: "市内交通与停车",
+          amount: "¥80-200/人",
+          notes: "停车费和临时接驳待核实。",
+        },
+        {
+          category: "门票",
+          amount: "待核实",
+          notes: "以景区官方公告和预约页面为准。",
+        },
+      ],
+      assumptions: "无外部大模型时的演示估算，实际价格需按日期、人数和车型刷新。",
+    },
     attractions: [
       {
         name: "东钱湖",

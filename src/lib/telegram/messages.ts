@@ -99,6 +99,7 @@ function formatReminderKind(kind: string) {
   const labels: Record<string, string> = {
     depart_now: "现在出发",
     recheck: "路线复查",
+    weather_refresh: "天气刷新",
   };
 
   return labels[kind] ?? kind;

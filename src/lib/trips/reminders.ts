@@ -8,6 +8,7 @@ export type BuildReminderScheduleInput = {
   latestDepartAt: Date;
   cadenceMinutes?: readonly number[];
   now?: Date;
+  travelWeatherRefreshAt?: Date;
 };
 
 export function buildReminderSchedule({
@@ -16,8 +17,9 @@ export function buildReminderSchedule({
   latestDepartAt,
   cadenceMinutes = DEFAULT_REMINDER_CADENCE_MINUTES,
   now,
+  travelWeatherRefreshAt,
 }: BuildReminderScheduleInput): ReminderJobData[] {
-  return cadenceMinutes
+  const routeReminders = cadenceMinutes
     .map((minutesBeforeDeparture) => {
       const kind: ReminderKind =
         minutesBeforeDeparture === 0 ? "depart_now" : "recheck";
@@ -40,4 +42,32 @@ export function buildReminderSchedule({
       };
     })
     .filter((reminder) => !now || reminder.scheduledFor >= now);
+
+  const weatherRefreshReminders = travelWeatherRefreshAt
+    ? [72, 24]
+        .map((hoursBeforeDeparture): ReminderJobData => {
+          const scheduledFor = new Date(
+            travelWeatherRefreshAt.getTime() - hoursBeforeDeparture * 60 * 60_000
+          );
+
+          return {
+            tripId,
+            legId,
+            kind: "weather_refresh",
+            scheduledFor,
+            dedupeKey: `${tripId}:${legId}:weather_refresh:${hoursBeforeDeparture}`,
+            payloadJson: JSON.stringify({
+              tripId,
+              legId,
+              kind: "weather_refresh",
+              hoursBeforeDeparture,
+            }),
+          };
+        })
+        .filter((reminder) => !now || reminder.scheduledFor >= now)
+    : [];
+
+  return [...weatherRefreshReminders, ...routeReminders].sort(
+    (left, right) => left.scheduledFor.getTime() - right.scheduledFor.getTime()
+  );
 }

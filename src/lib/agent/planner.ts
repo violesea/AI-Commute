@@ -42,9 +42,15 @@ import type {
 } from "@/lib/trips/types";
 import {
   assertTravelPlanAttractionCoverage,
+  assertTravelPlanBudget,
   normalizeTravelPlan,
   parseTravelPlanJson,
 } from "@/lib/trips/travel-plan";
+import {
+  addTravelSchedulePitfall,
+  assertTravelItinerarySchedule,
+  normalizeTravelItinerarySchedule,
+} from "@/lib/trips/travel-schedule";
 import type { AgentPlanningPurpose } from "@/lib/agent/types";
 
 const SESSION_TIMEOUT_MS = 600000;
@@ -329,6 +335,25 @@ const travelTransportSchema = objectParameters(
   ["recommended", "reason", "driving", "transit"]
 );
 
+const travelBudgetItemSchema = objectParameters(
+  {
+    category: { type: "string" },
+    amount: { type: "string" },
+    notes: { type: "string" },
+  },
+  ["category", "amount"]
+);
+
+const travelBudgetSchema = objectParameters(
+  {
+    currency: { type: "string" },
+    total: { type: "string" },
+    breakdown: arrayOfItems(travelBudgetItemSchema),
+    assumptions: { type: "string" },
+  },
+  ["currency", "total", "breakdown"]
+);
+
 const travelAttractionSchema = objectParameters(
   {
     name: { type: "string" },
@@ -384,6 +409,7 @@ const travelPlanSchema = objectParameters(
     days: { type: "number" },
     weather: travelWeatherSchema,
     transport: travelTransportSchema,
+    budget: travelBudgetSchema,
     attractions: arrayOfItems(travelAttractionSchema),
     lodging: arrayOfItems(travelLodgingSchema),
     food: arrayOfItems(travelFoodSchema),
@@ -394,6 +420,7 @@ const travelPlanSchema = objectParameters(
     "summary",
     "weather",
     "transport",
+    "budget",
     "attractions",
     "lodging",
     "food",
@@ -618,13 +645,13 @@ Actively capture stable user preferences. When the user says phrases such as 我
 Final user-facing replies must be plain text without Markdown formatting, headings, code ticks, or list markers.`;
 
 const TRAVEL_SYSTEM_PROMPT = `You are a personal travel-itinerary planning AI. Current dates should be interpreted in Beijing time.
-Plan a practical, evidence-aware trip rather than a generic list of attractions. Parse the destination, dates, number of days, origin, budget, pace, party, and constraints from the user's request. Ask for missing value-critical details only when the request cannot be safely planned; otherwise make a reasonable choice and state it in the result.
+Plan a practical, evidence-aware trip rather than a generic list of attractions. Parse the destination, dates, number of days, origin, budget, pace, party, and constraints from the user's request. Ask for missing value-critical details only when the request cannot be safely planned; otherwise make a reasonable choice and state it in the result. If the user gives a date range but no clock time, schedule daytime driving by default: first-day departure around 07:00, later sightseeing days around 08:00, and the final long return around 06:30. Never schedule a driving leg across midnight or put a leg outside the requested date range. Keep a normal driving day near eight hours; if the fixed dates make that impossible, state the high-intensity tradeoff and recommend adding a night instead of hiding it.
 Use read_settings for the default city, timezone, and origin, and use the current-location context when the user says they are starting from their current position. Call get_weather_reference early: its result contains live weather and the available multi-day forecast. Weather is dynamic evidence, not a static label or guarantee. Map the forecast to each itinerary day, populate weather.forecast, and add weather.routeRisks for every meaningful self-drive leg with drivingAdvice and a concrete action. Set dynamicMonitoring to true and state a refreshPolicy such as rechecking before departure and at every scheduled route review. If the forecast horizon does not cover the trip, explicitly mark the later days as unknown and require a refresh before departure.
 Self-driving is a time-varying process. Before calling get_transit_route, get_driving_route, get_walking_route, or get_bicycling_route, resolve both endpoints to lng,lat coordinates with search_poi. Compare self-drive and public transit whenever the route is meaningfully comparable. Use get_driving_route for self-drive and get_transit_route for public transit, then choose driving, transit, or mixed with a reason. Treat route duration and weather as snapshots: avoid claiming that a route is guaranteed, and make bad-weather actions explicit, such as postponing an exposed segment, switching to transit, adding indoor stops, or checking road and parking conditions again.
 Natural scenery is a hard output requirement, not an optional extra. Call search_natural_attractions once before selecting attractions. It searches multiple nature categories for you. Recommend at least three distinct natural candidates for a one-to-three-day trip, at least four for a trip of four days or longer, and at least one cultural candidate. Cover different natural types when the destination supports them, such as mountain, lake, forest, wetland, coast, island, canyon, waterfall, park, or viewpoint. The application rejects a travel plan that has too few natural candidates, so do not stop after finding one scenic spot. Use the evidence returned by tools; do not invent venue-specific facts.
-Search POIs before naming specific lodging or food venues. Explain the reason for every attraction, its best visiting time, suggested stay, and weather note. Search practical lodging areas and local food options. Add concrete pitfalls covering tickets/reservations, peak periods, parking or transit, weather, road conditions, and other destination-specific friction when relevant.
+Search POIs before naming specific lodging or food venues. Explain the reason for every attraction, its best visiting time, suggested stay, and weather note. Search practical lodging areas and local food options. Add concrete pitfalls covering tickets/reservations, peak periods, parking or transit, weather, road conditions, and other destination-specific friction when relevant. The budget is mandatory: provide a total range and a breakdown for lodging, food, fuel/charging, tolls, tickets and other meaningful costs; mark uncertain prices as pending verification and state the assumptions such as party size and vehicle type.
 For a normal one-to-three-day request, keep evidence bounded but sufficient: make one initial weather call, one broad natural-attraction search, at most ten representative attraction or practical-place keyword searches plus one lodging and one food keyword, and call each main driving/transit comparison at most once. Once you have the weather forecast, at least three natural candidates, a cultural candidate, lodging, food, and both transport options, stop searching and immediately call create_trip. Do not search every possible option or repeat an equivalent route call.
-The create_trip call is mandatory. In travel mode it must include a complete travelPlan object with destination, summary, weather including forecast and routeRisks, transport.driving, transport.transit, attractions, lodging, food, and pitfalls. Stops and legs must form a chronological itinerary; use stop notes for day/order context and route rationale for transport decisions. During a later route recheck, call get_weather_reference again before deciding. If weather, traffic, or road conditions change, update the route and pass the refreshed travelPlan to update_trip_summary or replace_trip_stops/replace_trip_legs so the visible plan stays consistent.
+The create_trip call is mandatory. In travel mode it must include a complete travelPlan object with destination, summary, weather including forecast and routeRisks, transport.driving, transport.transit, budget, attractions, lodging, food, and pitfalls. Stops and legs must form a chronological itinerary; every leg must include explicit latestDepartAt and targetArriveAt in the requested date range, with no cross-midnight driving. Use stop notes for day/order context and route rationale for transport decisions. During a later route recheck, call get_weather_reference again before deciding. If weather, traffic, or road conditions change, update the route and pass the refreshed travelPlan to update_trip_summary or replace_trip_stops/replace_trip_legs so the visible plan stays consistent.
 Final user-facing replies must be plain text without Markdown formatting, headings, code ticks, or list markers.`;
 
 function getSystemPrompt(purpose: AgentPlanningPurpose) {
@@ -959,19 +986,51 @@ function normalizeCreateTripInput(
 
   if (context.purpose === "travel" && travelPlan) {
     assertTravelPlanAttractionCoverage(travelPlan);
+    assertTravelPlanBudget(travelPlan);
+  }
+
+  const timezone = readString(args, "timezone", settings.timezone);
+  const stops = readArray(args, "stops").map(normalizeStop);
+  const legs = readArray(args, "legs").map(normalizeLeg);
+  const initialTargetArriveAt = readOptionalDate(args, "targetArriveAt");
+  const schedule =
+    context.purpose === "travel" && travelPlan
+      ? normalizeTravelItinerarySchedule({
+          prompt: context.prompt,
+          timezone,
+          targetArriveAt: initialTargetArriveAt,
+          stops,
+          legs,
+        })
+      : {
+          targetArriveAt: initialTargetArriveAt,
+          stops,
+          legs,
+        };
+  const normalizedTravelPlan =
+    context.purpose === "travel" && travelPlan
+      ? addTravelSchedulePitfall(travelPlan, schedule.legs, timezone)
+      : travelPlan;
+
+  if (context.purpose === "travel" && normalizedTravelPlan) {
+    assertTravelItinerarySchedule({
+      prompt: context.prompt,
+      timezone,
+      legs: schedule.legs,
+    });
   }
 
   return {
     userId: context.userId,
     agentSessionId: context.sessionId,
     rawPrompt: context.prompt,
-    timezone: readString(args, "timezone", settings.timezone),
+    timezone,
     title: readString(args, "title"),
-    targetArriveAt: readOptionalDate(args, "targetArriveAt"),
+    targetArriveAt: schedule.targetArriveAt,
     finalStopName: readOptionalString(args, "finalStopName"),
-    stops: readArray(args, "stops").map(normalizeStop),
-    legs: readArray(args, "legs").map(normalizeLeg),
-    travelPlan,
+    stops: schedule.stops,
+    legs: schedule.legs,
+    travelPlan: normalizedTravelPlan,
   };
 }
 
@@ -1084,12 +1143,50 @@ async function normalizeReplaceRouteInput(
 
   if (context.purpose === "travel" && travelPlan) {
     assertTravelPlanAttractionCoverage(travelPlan);
+    if (args.travelPlan !== undefined) {
+      assertTravelPlanBudget(travelPlan);
+    }
   }
 
   if (!stops.length || !legs.length) {
     throw new Error(
       "Replacing stops or legs requires complete route data or an existing route to merge with."
     );
+  }
+
+  const initialTargetArriveAt =
+    readOptionalDate(args, "targetArriveAt") ??
+    current.trip.targetArriveAt ??
+    undefined;
+  const schedule =
+    context.purpose === "travel" && travelPlan
+      ? normalizeTravelItinerarySchedule({
+          prompt: context.prompt,
+          timezone: current.trip.timezone,
+          targetArriveAt: initialTargetArriveAt,
+          stops,
+          legs,
+        })
+      : {
+          targetArriveAt: initialTargetArriveAt,
+          stops,
+          legs,
+        };
+  const normalizedTravelPlan =
+    context.purpose === "travel" && travelPlan
+      ? addTravelSchedulePitfall(
+          travelPlan,
+          schedule.legs,
+          current.trip.timezone
+        )
+      : travelPlan;
+
+  if (context.purpose === "travel" && normalizedTravelPlan) {
+    assertTravelItinerarySchedule({
+      prompt: context.prompt,
+      timezone: current.trip.timezone,
+      legs: schedule.legs,
+    });
   }
 
   return {
@@ -1101,14 +1198,11 @@ async function normalizeReplaceRouteInput(
       current.trip.finalStopName ??
       legs[legs.length - 1]?.destinationName ??
       stops[stops.length - 1]?.name,
-    targetArriveAt:
-      readOptionalDate(args, "targetArriveAt") ??
-      current.trip.targetArriveAt ??
-      undefined,
+    targetArriveAt: schedule.targetArriveAt,
     status: readOptionalString(args, "status") ?? "monitoring",
-    stops,
-    legs,
-    travelPlan: travelPlan ?? undefined,
+    stops: schedule.stops,
+    legs: schedule.legs,
+    travelPlan: normalizedTravelPlan ?? undefined,
   };
 }
 
@@ -1309,6 +1403,7 @@ async function executeToolCall(
 
     if (context.purpose === "travel" && travelPlan) {
       assertTravelPlanAttractionCoverage(travelPlan);
+      assertTravelPlanBudget(travelPlan);
     }
 
     const request = {

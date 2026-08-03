@@ -8,7 +8,7 @@ import type {
   PlannedTripLegInput,
   PlannedTripStopInput,
 } from "@/lib/trips/types";
-import type { TravelPlan } from "@/lib/trips/travel-plan";
+import { parseTravelPlanJson, type TravelPlan } from "@/lib/trips/travel-plan";
 
 const DEFAULT_ROUTE_MINUTES = 30;
 const DEFAULT_BUFFER_COMPONENTS: BufferComponentInput[] = [
@@ -297,6 +297,8 @@ export async function replaceTripRoute(input: ReplaceTripRouteInput) {
     }
 
     const explicitLegEndpoints = hasExplicitLegEndpoints(orderedLegs);
+    const travelPlanForReminders =
+      input.travelPlan ?? parseTravelPlanJson(trip.travelPlanJson);
     for (const [index, legInput] of orderedLegs.entries()) {
       const order = legInput.order ?? index;
       const { fromStop, toStop } = resolveLegStops({
@@ -408,6 +410,8 @@ export async function replaceTripRoute(input: ReplaceTripRouteInput) {
           tripId: trip.id,
           legId: leg.id,
           latestDepartAt,
+          travelWeatherRefreshAt:
+            travelPlanForReminders && index === 0 ? latestDepartAt : undefined,
         }),
       });
     }
@@ -526,7 +530,8 @@ export async function selectRouteCandidate(input: SelectRouteCandidateInput) {
 }
 
 export async function replaceReminderSchedule(input: ReplaceReminderScheduleInput) {
-  await findOwnedTrip(input.tripId, input.userId);
+  const trip = await findOwnedTrip(input.tripId, input.userId);
+  const travelPlan = parseTravelPlanJson(trip.travelPlanJson);
   const cadenceMinutes = normalizeCadenceMinutes(input.cadenceMinutes);
   const legs = input.legId || input.legOrder !== undefined
     ? [await findOwnedLeg(input)]
@@ -555,6 +560,10 @@ export async function replaceReminderSchedule(input: ReplaceReminderScheduleInpu
           latestDepartAt: leg.latestDepartAt,
           cadenceMinutes,
           now: input.now,
+          travelWeatherRefreshAt:
+            travelPlan && leg.order === legs[0]?.order
+              ? leg.latestDepartAt
+              : undefined,
         }),
       });
     }

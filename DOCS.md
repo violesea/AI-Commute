@@ -1,0 +1,31 @@
+---
+skills_used: []
+model_used: GPT-5
+model_source: visible_runtime
+created_at: 2026-08-03T00:00:00+08:00
+updated_at: 2026-08-03T15:04:00+08:00
+---
+
+# Engineering Notes
+
+## 旅行计划数据
+
+旅行模式通过 Agent 的 `create_trip` 写入结构化 `travelPlan`。天气包含预报、路段风险、动态监控标记和刷新策略；交通同时保存自驾与公共交通证据；景点、住宿、美食、避坑和预算由同一计划保存。
+
+## 旅行时间轴
+
+当用户给出日期范围但没有具体时刻时，服务端根据 `D1`/`第 1 天` 等路线标记重建路线段的北京时区时间，默认日间出发，返程日提前出发，并将停靠点到达时间和提醒任务一起更新。模型给出的异常跨日时间不能直接进入监控系统。
+
+## 天气刷新任务
+
+旅行首段出发前约 72 小时和 24 小时各生成一个 `weather_refresh` 任务；scheduler 将其作为旅行路线复查运行，先刷新天气再决定是否更新路线。普通通勤仍只使用既有 `recheck` 和 `depart_now` 任务。
+
+## 模型配置与接入验证
+
+设置页的模型下拉框只控制普通通勤规划使用的模型；旅行规划在服务端固定使用 `deepseek-v4-flash`，避免用户误选通勤模型后改变旅行规划契约。模型选项通过 `src/lib/agent/model-config.ts` 集中维护，并由设置 API 校验。
+
+“测试当前模型接入”调用 `/api/settings/test-model`。接口要求登录，拒绝未支持模型；服务器未配置 `OPENAI_API_KEY` 时返回 `not_configured`，已配置时使用 OpenAI-compatible Chat Completions 发起一次无工具最小请求，成功返回模型和耗时，失败只返回截断且脱敏后的错误。API Key 和 Base URL 永不进入页面响应。
+
+## 验证
+
+完整验证命令见 README。真实运行验收必须检查数据库中的旅行计划、路线段日期、提醒任务类型和详情页渲染，不能只以首页 HTTP 200 作为成功依据。

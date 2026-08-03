@@ -47,6 +47,7 @@ function formatReminderKind(kind: string) {
   const labels: Record<string, string> = {
     depart_now: "现在出发",
     recheck: "路线复查",
+    weather_refresh: "天气刷新",
   };
 
   return labels[kind] ?? kind;
@@ -57,6 +58,7 @@ function formatTrigger(trigger?: string | null) {
     manual: "手动",
     reminder: "提醒",
     recheck: "路线复查",
+    weather_refresh: "天气刷新",
     scheduler: "调度器",
   };
 
@@ -150,15 +152,24 @@ export default async function TripDetailPage({
     (sum, candidate) => sum + candidate.bufferMinutes,
     0
   );
+  const isTravelTrip = trip.agentSessions[0]?.purpose === "travel";
   const routeGroups = trip.legs.map((leg) => ({
     id: leg.id,
     title: `${leg.originName} 到 ${leg.destinationName}`,
     subtitle: [
       leg.latestDepartAt
-        ? `${formatTimeInTimeZone(leg.latestDepartAt, tripTimeZone)} 前出发`
+        ? `${
+            isTravelTrip
+              ? formatDateTimeInTimeZone(leg.latestDepartAt, tripTimeZone)
+              : formatTimeInTimeZone(leg.latestDepartAt, tripTimeZone)
+          } 前出发`
         : null,
       leg.targetArriveAt
-        ? `${formatTimeInTimeZone(leg.targetArriveAt, tripTimeZone)} 前到达`
+        ? `${
+            isTravelTrip
+              ? formatDateTimeInTimeZone(leg.targetArriveAt, tripTimeZone)
+              : formatTimeInTimeZone(leg.targetArriveAt, tripTimeZone)
+          } 前到达`
         : null,
     ]
       .filter(Boolean)

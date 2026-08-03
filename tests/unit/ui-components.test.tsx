@@ -1352,10 +1352,10 @@ describe("sample-aligned UI components", () => {
     const html = renderToStaticMarkup(page);
 
     expect(html).toContain("AI Commute");
-    expect(html).toContain("ZhuChenyu");
+    expect(html).toContain("violesea");
     expect(html).toContain("GitHub");
     expect(html).toContain(
-      'href="https://github.com/zhuchenyu2008/Commute-Planner"'
+      'href="https://github.com/violesea/AI-Commute"'
     );
     expect(html).toContain("致谢名单");
   });
@@ -1476,6 +1476,9 @@ describe("sample-aligned UI components", () => {
     expect(html).toContain("北京时间（Asia/Shanghai）");
     expect(html).toContain("通勤方式倾向");
     expect(html).toContain("通勤规划模型");
+    expect(html).toContain("模型接入");
+    expect(html).toContain("旅行规划模型：DeepSeek V4 Flash");
+    expect(html).toContain("测试当前模型接入");
     expect(html).toContain("deepseek-v4-flash");
     expect(html).toContain('name="model"');
     expect(html).toContain('name="timezone"');
@@ -1770,6 +1773,52 @@ describe("sample-aligned UI components", () => {
       );
     });
     await screen.findByText("邮件测试已发送");
+  });
+
+  it("tests the selected planning model from settings", async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url) === "/api/settings/test-model" && init?.method === "POST") {
+        return Response.json({
+          result: {
+            status: "connected",
+            model: "deepseek-v4-flash",
+            latencyMs: 42,
+          },
+        });
+      }
+
+      return Response.json({ error: "unexpected request" }, { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <SettingsForm
+        values={{
+          defaultCity: "宁波",
+          timezone: "Asia/Shanghai",
+          model: "deepseek-v4-flash",
+          modelConfigured: true,
+          originName: "",
+          originLngLat: "",
+          routePreference: "balanced",
+          telegramChatId: "",
+          emailRecipient: "",
+        }}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "测试当前模型接入" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/settings/test-model",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ model: "deepseek-v4-flash" }),
+        })
+      );
+    });
+    await screen.findByText("接入成功：DeepSeek V4 Flash，耗时 42ms");
   });
 
   it("shows detailed test notification failures in settings", async () => {

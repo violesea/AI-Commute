@@ -44,4 +44,33 @@ describe("buildReminderSchedule", () => {
       { tripId: "trip_123", legId: "leg_456", kind: "depart_now", minutesBeforeDeparture: 0 },
     ]);
   });
+
+  it("adds pre-departure weather refresh jobs for travel plans", () => {
+    const latestDepartAt = new Date("2026-08-08T23:00:00.000Z");
+    const reminders = buildReminderSchedule({
+      tripId: "trip_travel",
+      legId: "leg_first",
+      latestDepartAt,
+      travelWeatherRefreshAt: latestDepartAt,
+      now: new Date("2026-08-01T00:00:00.000Z"),
+    });
+
+    expect(
+      reminders
+        .filter((reminder) => reminder.kind === "weather_refresh")
+        .map((reminder) => reminder.scheduledFor.toISOString())
+    ).toEqual([
+      "2026-08-05T23:00:00.000Z",
+      "2026-08-07T23:00:00.000Z",
+    ]);
+    expect(reminders.map((reminder) => reminder.kind)).toContain(
+      "depart_now"
+    );
+    expect(
+      JSON.parse(
+        reminders.find((reminder) => reminder.kind === "weather_refresh")!
+          .payloadJson
+      )
+    ).toMatchObject({ kind: "weather_refresh", hoursBeforeDeparture: 72 });
+  });
 });
