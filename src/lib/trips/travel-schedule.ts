@@ -272,14 +272,36 @@ const EXPLICIT_CLOCK_PATTERNS = [
   /(?:(?:凌晨|清晨|早上|上午|中午|下午|傍晚|晚上|夜间)\s*)?(?:[01]?\d|2[0-3])\s*(?:点|时)(?:\s*[0-5]?\d\s*分)?/g,
 ] as const;
 
+const SCHEDULE_CLOCK_TOKEN = "__SCHEDULE_CLOCK__";
+
 function normalizeScheduledText(value?: string) {
   if (!value) return value;
 
-  return EXPLICIT_CLOCK_PATTERNS.reduce(
-    (text, pattern) => text.replace(pattern, "按行程结构化时间"),
+  let text = EXPLICIT_CLOCK_PATTERNS.reduce(
+    (current, pattern) => current.replace(pattern, SCHEDULE_CLOCK_TOKEN),
     value
-  )
-    .replace(/按行程结构化时间\s+/g, "按行程结构化时间")
+  );
+
+  const tokenPattern = new RegExp(
+    `${SCHEDULE_CLOCK_TOKEN}\\s*(?:[-–—~至]\\s*${SCHEDULE_CLOCK_TOKEN})+`,
+    "g"
+  );
+
+  return text
+    .replace(tokenPattern, "")
+    .replace(
+      new RegExp(
+        `(?:于|在|约|大约)\\s*${SCHEDULE_CLOCK_TOKEN}`,
+        "g"
+      ),
+      ""
+    )
+    .replace(
+      new RegExp(`${SCHEDULE_CLOCK_TOKEN}\\s*(?:左右|前|后)`, "g"),
+      ""
+    )
+    .replaceAll(SCHEDULE_CLOCK_TOKEN, "")
+    .replace(/\s+([，。；：、,.!?！？])/g, "$1")
     .replace(/[ \t]{2,}/g, " ")
     .trim();
 }

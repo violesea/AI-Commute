@@ -444,10 +444,11 @@ describe("travel itinerary schedule", () => {
     });
 
     expect(result.legs[0]).toMatchObject({
-      segmentDetail: "按行程结构化时间抵达宝昌镇，入住休息",
-      routeRationale: "按行程结构化时间后再出发会影响返程安排",
+      segmentDetail: "抵达宝昌镇，入住休息",
+      routeRationale: "再出发会影响返程安排",
     });
     expect(result.legs[0]?.segmentDetail).not.toMatch(/14:15/);
+    expect(JSON.stringify(result)).not.toContain("按行程结构化时间");
   });
 
   it("rejects a long self-drive leg that arrives after the local sunset safety line", () => {

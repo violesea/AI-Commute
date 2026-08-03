@@ -227,7 +227,10 @@ describe("createOpenAiChatClient", () => {
     });
 
     expect(completionMock).toHaveBeenCalledWith(
-      expect.objectContaining({ max_tokens: TRAVEL_MAX_OUTPUT_TOKENS }),
+      expect.objectContaining({
+        max_tokens: TRAVEL_MAX_OUTPUT_TOKENS,
+        thinking: { type: "disabled" },
+      }),
       expect.objectContaining({ signal: undefined })
     );
     completionMock.mockReset();

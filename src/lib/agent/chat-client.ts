@@ -60,6 +60,11 @@ type EnvSource = Partial<Record<string, string | undefined>>;
 const AGENT_MAX_OUTPUT_TOKENS = 32768;
 export const TRAVEL_MAX_OUTPUT_TOKENS = 16384;
 
+type DeepSeekThinking = {
+  type: "enabled" | "disabled";
+  effort?: "low" | "high" | "max";
+};
+
 function parseToolArguments(value: string | null | undefined) {
   if (!value) return { arguments: {} };
 
@@ -130,25 +135,37 @@ export function createOpenAiChatClient(
         input.model?.trim() || env.OPENAI_MODEL?.trim() || DEFAULT_PLANNING_MODEL;
       const maxOutputTokens = input.maxOutputTokens ?? AGENT_MAX_OUTPUT_TOKENS;
       const startedAt = Date.now();
-      const completion = await client.chat.completions.create(
-        {
-          model,
-          messages: toOpenAiMessages(input.messages),
-          tools: input.tools.map((tool) => ({
-            type: "function" as const,
-            function: {
-              name: tool.name,
-              description: tool.description,
-              parameters: tool.parameters,
-            },
-          })),
-          tool_choice: input.toolChoice ?? "auto",
-          max_tokens: maxOutputTokens,
-        },
-        { signal: input.signal }
-      );
+      const requestBody = {
+        model,
+        messages: toOpenAiMessages(input.messages),
+        tools: input.tools.map((tool) => ({
+          type: "function" as const,
+          function: {
+            name: tool.name,
+            description: tool.description,
+            parameters: tool.parameters,
+          },
+        })),
+        tool_choice: input.toolChoice ?? "auto",
+        max_tokens: maxOutputTokens,
+        stream: false,
+        // DeepSeek V4 enables thinking by default. Travel planning is already
+        // constrained by evidence tools and server-side validators; disabling
+        // hidden reasoning leaves more budget for a complete tool JSON call and
+        // avoids spending minutes repeating a large itinerary draft.
+        ...(input.purpose === "travel" &&
+        /^deepseek-v4-(?:flash|pro)$/i.test(model)
+          ? { thinking: { type: "disabled" } satisfies DeepSeekThinking }
+          : {}),
+      } as Parameters<typeof client.chat.completions.create>[0] & {
+        thinking?: DeepSeekThinking;
+      };
+      const completion = (await client.chat.completions.create(requestBody, {
+        signal: input.signal,
+      })) as OpenAI.Chat.Completions.ChatCompletion;
 
-      const message = completion.choices[0]?.message;
+      const choice = completion.choices[0];
+      const message = choice?.message;
 
       if (!message) {
         throw new Error("OpenAI 未返回规划消息。");
@@ -163,6 +180,9 @@ export function createOpenAiChatClient(
           toolCount: input.tools.length,
           outputChars: JSON.stringify(message).length,
           maxOutputTokens,
+          finishReason: choice?.finish_reason ?? null,
+          promptTokens: completion.usage?.prompt_tokens ?? null,
+          completionTokens: completion.usage?.completion_tokens ?? null,
           durationMs: Date.now() - startedAt,
         })
       );
