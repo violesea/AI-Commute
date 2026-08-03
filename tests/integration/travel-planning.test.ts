@@ -135,6 +135,101 @@ describe("travel planning integration", () => {
     expect(Buffer.byteLength(serialized)).toBeLessThan(1_000);
   });
 
+  it("nudges the model to converge after the direct POI budget is exhausted", async () => {
+    const user = await prisma.user.create({
+      data: {
+        email: `travel-poi-budget-${Date.now()}@example.com`,
+        name: "旅行检索预算用户",
+        passwordHash: "hash",
+        settings: {
+          create: {
+            defaultCity: "北京",
+            timezone: "Asia/Shanghai",
+            originName: "北京",
+            originLngLat: "116.4,39.9",
+            routePreference: "balanced",
+          },
+        },
+      },
+    });
+    const session = await startPlanningSession({
+      userId: user.id,
+      purpose: "travel",
+      prompt: "请规划 2026 年 8 月 8 日至 11 日北京到锡林郭勒的旅行。",
+    });
+    let callCount = 0;
+    let receivedConvergenceNudge = false;
+    const chatClient: AgentChatClient = {
+      async complete(input) {
+        callCount += 1;
+        receivedConvergenceNudge = input.messages.some((message) =>
+          message.content.includes("旅行地点检索预算已用完")
+        );
+
+        if (callCount === 1) {
+          return {
+            message: {
+              role: "assistant",
+              content: "补充有限的地点证据。",
+              toolCalls: Array.from({ length: 8 }, (_, index) => ({
+                id: `poi-budget-${index}`,
+                name: "search_poi",
+                arguments: {
+                  keywords: `预算测试地点${index}`,
+                  city: "锡林郭勒盟",
+                },
+              })),
+            },
+          };
+        }
+
+        return {
+          message: {
+            role: "assistant",
+            content: "已根据已有证据落地行程。",
+            toolCalls: [
+              {
+                id: "poi-budget-create",
+                name: "create_trip",
+                arguments: {
+                  title: "北京到锡林郭勒",
+                  timezone: "Asia/Shanghai",
+                  finalStopName: "锡林郭勒",
+                  stops: [
+                    { order: 0, name: "北京", kind: "origin" },
+                    { order: 1, name: "锡林郭勒", kind: "destination" },
+                  ],
+                  legs: [
+                    {
+                      order: 0,
+                      originName: "北京",
+                      destinationName: "锡林郭勒",
+                      routeMinutes: 120,
+                      totalMinutes: 120,
+                      bufferComponents: [],
+                      mode: "driving",
+                      segmentTitle: "D1·去程",
+                    },
+                  ],
+                  travelPlan,
+                },
+              },
+            ],
+          },
+        };
+      },
+    };
+
+    const result = await runPlanningSession(session.id, {
+      amapClient: createMockAmapClient(),
+      chatClient,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(receivedConvergenceNudge).toBe(true);
+    expect(callCount).toBe(2);
+  });
+
   it("normalizes invalid model times and persists pre-departure weather jobs", async () => {
     const user = await prisma.user.create({
       data: {

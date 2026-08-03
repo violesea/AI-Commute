@@ -119,6 +119,7 @@ type PlanningSettings = {
 type TravelEvidenceBudget = {
   maxDirectPoiSearches: number;
   directPoiSearches: number;
+  exhaustionNudgeSent: boolean;
 };
 
 export type RunPlanningSessionOptions = {
@@ -1186,6 +1187,7 @@ function createTravelEvidenceBudget(
   return {
     maxDirectPoiSearches: dayCount >= 4 ? 8 : 10,
     directPoiSearches: 0,
+    exhaustionNudgeSent: false,
   };
 }
 
@@ -1698,14 +1700,19 @@ async function executeToolCall(
       !context.toolResultCache.has(cacheKey)
     ) {
       if (budget.directPoiSearches >= budget.maxDirectPoiSearches) {
-        const emptyResult: Awaited<ReturnType<AmapClient["searchPoi"]>> = [];
-        context.toolResultCache.set(cacheKey, emptyResult);
+        const exhaustedResult = {
+          kind: "budget_exhausted",
+          candidates: [],
+          instruction:
+            "本次旅行的地点检索预算已用完。不要再次调用 search_poi；请使用已经返回的地点证据，继续查询路线或立即调用 create_trip。",
+        };
+        context.toolResultCache.set(cacheKey, exhaustedResult);
         return recordToolCall({
           agentSessionId: context.sessionId,
           name,
           request,
           signal: context.signal,
-          run: async () => emptyResult,
+          run: async () => exhaustedResult,
         });
       }
 
@@ -2262,6 +2269,22 @@ async function runConversationAttempt(input: {
 
     if (hadToolExecutionError) {
       continue;
+    }
+
+    const travelEvidenceBudget = input.context.travelEvidenceBudget;
+    if (
+      input.context.purpose === "travel" &&
+      travelEvidenceBudget &&
+      travelEvidenceBudget.directPoiSearches >=
+        travelEvidenceBudget.maxDirectPoiSearches &&
+      !travelEvidenceBudget.exhaustionNudgeSent
+    ) {
+      travelEvidenceBudget.exhaustionNudgeSent = true;
+      input.messages.push({
+        role: "user",
+        content:
+          "旅行地点检索预算已用完。请停止 search_poi，不要再尝试新的空关键词；使用当前已经获得的自然景点、人文景点、住宿和美食证据，立即查询自驾与公共交通路线，然后调用 create_trip 落地完整行程。",
+      });
     }
 
     if (shouldCompleteContinuationAfterTools(toolCalls, input.requireCreateTrip)) {
