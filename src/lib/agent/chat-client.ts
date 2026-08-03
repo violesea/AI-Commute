@@ -63,6 +63,90 @@ const AGENT_MAX_OUTPUT_TOKENS = 32768;
 export const TRAVEL_MAX_OUTPUT_TOKENS = 16384;
 const MAX_ASSISTANT_CONTEXT_CHARS = 1200;
 
+type JsonSchemaRecord = Record<string, unknown>;
+
+function asJsonSchemaRecord(value: unknown): JsonSchemaRecord | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as JsonSchemaRecord)
+    : null;
+}
+
+function toDeepSeekStrictSchema(value: unknown): unknown {
+  const schema = asJsonSchemaRecord(value);
+  if (!schema) return value;
+
+  if (schema.type === "object" || schema.properties !== undefined) {
+    const properties = asJsonSchemaRecord(schema.properties) ?? {};
+    const required = new Set(
+      Array.isArray(schema.required)
+        ? schema.required.filter(
+            (item): item is string => typeof item === "string"
+          )
+        : []
+    );
+
+    return {
+      ...schema,
+      type: "object",
+      properties: Object.fromEntries(
+        Object.entries(properties).map(([key, property]) => [
+          key,
+          required.has(key)
+            ? toDeepSeekStrictSchema(property)
+            : {
+                anyOf: [toDeepSeekStrictSchema(property), { type: "null" }],
+              },
+        ])
+      ),
+      required: Object.keys(properties),
+      additionalProperties: false,
+    };
+  }
+
+  if (schema.type === "array") {
+    return {
+      ...schema,
+      items: toDeepSeekStrictSchema(schema.items),
+    };
+  }
+
+  if (Array.isArray(schema.anyOf)) {
+    return {
+      ...schema,
+      anyOf: schema.anyOf.map(toDeepSeekStrictSchema),
+    };
+  }
+
+  return schema;
+}
+
+function getDeepSeekStrictBaseUrl(baseUrl?: string) {
+  const normalized = baseUrl?.trim().replace(/\/+$/, "");
+  if (!normalized) return undefined;
+
+  if (/^https?:\/\/api\.deepseek\.com\/v1$/i.test(normalized)) {
+    return normalized.replace(/\/v1$/i, "/beta");
+  }
+
+  if (/^https?:\/\/api\.deepseek\.com$/i.test(normalized)) {
+    return `${normalized}/beta`;
+  }
+
+  return undefined;
+}
+
+function toDeepSeekStrictTools(tools: AgentChatToolDefinition[]) {
+  return tools.map((tool) => ({
+    type: "function" as const,
+    function: {
+      name: tool.name,
+      description: tool.description,
+      strict: true,
+      parameters: toDeepSeekStrictSchema(tool.parameters),
+    },
+  }));
+}
+
 type DeepSeekThinking = {
   type: "enabled" | "disabled";
   effort?: "low" | "high" | "max";
@@ -155,27 +239,38 @@ export function createOpenAiChatClient(
     return createFallbackChatClient();
   }
 
+  const baseUrl = env.OPENAI_BASE_URL?.trim() || undefined;
   const client = new OpenAI({
     apiKey,
-    baseURL: env.OPENAI_BASE_URL?.trim() || undefined,
+    baseURL: baseUrl,
   });
+  const deepSeekStrictBaseUrl = getDeepSeekStrictBaseUrl(baseUrl);
+  const strictTravelClient = deepSeekStrictBaseUrl
+    ? new OpenAI({ apiKey, baseURL: deepSeekStrictBaseUrl })
+    : null;
+
   return {
     async complete(input) {
       const model =
         input.model?.trim() || env.OPENAI_MODEL?.trim() || DEFAULT_PLANNING_MODEL;
       const maxOutputTokens = input.maxOutputTokens ?? AGENT_MAX_OUTPUT_TOKENS;
       const startedAt = Date.now();
+      const useStrictTravelTools =
+        input.purpose === "travel" && strictTravelClient !== null;
+      const activeClient = useStrictTravelTools ? strictTravelClient : client;
       const requestBody = {
         model,
         messages: toOpenAiMessages(input.messages),
-        tools: input.tools.map((tool) => ({
-          type: "function" as const,
-          function: {
-            name: tool.name,
-            description: tool.description,
-            parameters: tool.parameters,
-          },
-        })),
+        tools: useStrictTravelTools
+          ? toDeepSeekStrictTools(input.tools)
+          : input.tools.map((tool) => ({
+              type: "function" as const,
+              function: {
+                name: tool.name,
+                description: tool.description,
+                parameters: tool.parameters,
+              },
+            })),
         tool_choice: input.toolChoice ?? "auto",
         max_tokens: maxOutputTokens,
         stream: false,
@@ -190,7 +285,7 @@ export function createOpenAiChatClient(
       } as Parameters<typeof client.chat.completions.create>[0] & {
         thinking?: DeepSeekThinking;
       };
-      const completion = (await client.chat.completions.create(requestBody, {
+      const completion = (await activeClient.chat.completions.create(requestBody, {
         signal: input.signal,
       })) as OpenAI.Chat.Completions.ChatCompletion;
 

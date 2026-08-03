@@ -2052,8 +2052,9 @@ export function stringifyToolResult(result: unknown) {
 
 function stringifyToolError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
-  const instruction = message.includes("结构化 travelPlan")
-    ? "旅行模式的 create_trip 必须在本次调用中包含完整 travelPlan 对象（destination、weather、transport、budget、attractions、lodging、food、pitfalls），不能只提交 stops 和 legs。请压缩文字后立即重新调用 create_trip。"
+  const instruction =
+    message.includes("结构化 travelPlan") || message.includes("travelPlan.")
+      ? "旅行模式的 create_trip 必须在本次调用中包含完整 travelPlan 对象，且 transport 必须是包含 recommended、reason、driving、transit 的对象；同时提供 destination、weather、budget、attractions、lodging、food、pitfalls。不要只补一个字段，也不要只提交 stops 和 legs；请压缩文字后立即重新调用一次完整 create_trip。"
     : "工具调用未执行成功。请根据错误修正参数后重新调用同一个工具，不要只返回文字。";
 
   return JSON.stringify({

@@ -330,4 +330,87 @@ describe("createOpenAiChatClient", () => {
     expect(result.message.toolCalls?.[0]?.parseError).toBeUndefined();
     completionMock.mockReset();
   });
+
+  it("uses DeepSeek strict schemas for nested travel tool calls", async () => {
+    completionMock.mockResolvedValueOnce({
+      choices: [{ message: { content: "已完成" } }],
+    });
+
+    const client = createOpenAiChatClient({
+      OPENAI_API_KEY: "test-key",
+      OPENAI_BASE_URL: "https://api.deepseek.com/v1",
+    });
+
+    await client.complete({
+      messages: [{ role: "user", content: "规划旅行" }],
+      tools: [
+        {
+          name: "create_trip",
+          description: "Create a trip",
+          parameters: {
+            type: "object",
+            properties: {
+              travelPlan: {
+                type: "object",
+                properties: {
+                  destination: { type: "string" },
+                  transport: {
+                    type: "object",
+                    properties: {
+                      recommended: { type: "string" },
+                    },
+                    required: ["recommended"],
+                    additionalProperties: false,
+                  },
+                },
+                required: ["destination"],
+                additionalProperties: false,
+              },
+            },
+            required: ["travelPlan"],
+            additionalProperties: false,
+          },
+        },
+      ],
+      model: "deepseek-v4-flash",
+      purpose: "travel",
+    });
+
+    const requestTools = completionMock.mock.calls[0]?.[0]?.tools as Array<{
+      function: {
+        strict?: boolean;
+        parameters?: {
+          required?: string[];
+          properties?: {
+            travelPlan?: {
+              required?: string[];
+              properties?: {
+                transport?: {
+                  anyOf?: Array<{
+                    type?: string;
+                    required?: string[];
+                  }>;
+                };
+              };
+            };
+          };
+        };
+      };
+    }>;
+    const parameters = requestTools[0]?.function.parameters;
+
+    expect(requestTools[0]?.function.strict).toBe(true);
+    expect(parameters?.required).toEqual(["travelPlan"]);
+    expect(parameters?.properties?.travelPlan?.required).toEqual([
+      "destination",
+      "transport",
+    ]);
+    expect(
+      parameters?.properties?.travelPlan?.properties?.transport?.anyOf
+    ).toEqual([
+      expect.objectContaining({ required: ["recommended"] }),
+      { type: "null" },
+    ]);
+    completionMock.mockReset();
+  });
 });
