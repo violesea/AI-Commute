@@ -252,6 +252,107 @@ describe("travel planning integration", () => {
     });
   });
 
+  it("rejects a daily driving ceiling violation and lets the model re-plan", async () => {
+    const user = await prisma.user.create({
+      data: {
+        email: `travel-daily-limit-${Date.now()}@example.com`,
+        name: "每日驾驶上限用户",
+        passwordHash: "hash",
+        settings: {
+          create: {
+            defaultCity: "北京",
+            timezone: "Asia/Shanghai",
+            originName: "北京",
+            originLngLat: "116.4,39.9",
+            routePreference: "balanced",
+          },
+        },
+      },
+    });
+    const session = await startPlanningSession({
+      userId: user.id,
+      purpose: "travel",
+      prompt:
+        "请规划 2026-08-15 至 2026-08-19 的北京到锡林郭勒自驾旅行，每天自驾不超过 6 小时。",
+    });
+    let callCount = 0;
+    let rejectedToolMessage = "";
+    const chatClient: AgentChatClient = {
+      async complete(input) {
+        callCount += 1;
+        rejectedToolMessage =
+          input.messages
+            .filter((message) => message.role === "tool")
+            .at(-1)?.content ?? rejectedToolMessage;
+        const splitAcrossDays = callCount > 1;
+
+        return {
+          message: {
+            role: "assistant",
+            content: "创建旅行行程。",
+            toolCalls: [
+              {
+                id: `daily-limit-create-${callCount}`,
+                name: "create_trip",
+                arguments: {
+                  title: "北京到锡林郭勒",
+                  timezone: "Asia/Shanghai",
+                  finalStopName: "北京",
+                  stops: [
+                    { order: 0, name: "北京", kind: "origin" },
+                    { order: 1, name: "元上都遗址", kind: "destination" },
+                    { order: 2, name: "多伦", kind: "destination" },
+                  ],
+                  legs: [
+                    {
+                      order: 0,
+                      originName: "北京",
+                      destinationName: "元上都遗址",
+                      routeMinutes: 342,
+                      totalMinutes: 342,
+                      bufferComponents: [],
+                      mode: "driving",
+                      segmentTitle: "D1·去程",
+                    },
+                    {
+                      order: 1,
+                      originName: "元上都遗址",
+                      destinationName: "多伦",
+                      routeMinutes: 48,
+                      totalMinutes: 48,
+                      bufferComponents: [],
+                      mode: "driving",
+                      segmentTitle: splitAcrossDays ? "D2·转场" : "D1·转场",
+                    },
+                  ],
+                  travelPlan,
+                },
+              },
+            ],
+          },
+        };
+      },
+    };
+
+    const result = await runPlanningSession(session.id, {
+      amapClient: createMockAmapClient(),
+      chatClient,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(callCount).toBe(2);
+    expect(rejectedToolMessage).toContain("累计自驾约 6.5 小时");
+    const persisted = await prisma.trip.findUniqueOrThrow({
+      where: { id: result.tripId! },
+      include: { legs: { orderBy: { order: "asc" } } },
+    });
+    expect(
+      persisted.legs.map((leg) =>
+        formatInTimeZone(leg.latestDepartAt!, "Asia/Shanghai", "yyyy-MM-dd")
+      )
+    ).toEqual(["2026-08-15", "2026-08-16"]);
+  });
+
   it("forces create_trip when the model ends its evidence pass with plain text", async () => {
     const user = await prisma.user.create({
       data: {

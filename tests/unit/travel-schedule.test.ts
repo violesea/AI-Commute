@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { formatInTimeZone } from "date-fns-tz";
 import {
   assertTravelItinerarySchedule,
+  findDailyDrivingLimitViolation,
   normalizeTravelItinerarySchedule,
+  parseDailyDrivingLimitMinutes,
   parseTravelDateRange,
 } from "@/lib/trips/travel-schedule";
 
@@ -31,6 +33,88 @@ describe("travel itinerary schedule", () => {
       endDate: "2026-08-11",
       days: 4,
     });
+  });
+
+  it("parses an explicit daily self-drive ceiling", () => {
+    expect(parseDailyDrivingLimitMinutes("请按每天自驾不超过 6 小时安排路线")).toBe(360);
+    expect(parseDailyDrivingLimitMinutes("每日不超过 90 分钟自驾")).toBe(90);
+    expect(parseDailyDrivingLimitMinutes("每天游览不超过 6 小时")).toBeUndefined();
+  });
+
+  it("rejects the aggregate daily driving time above the user's ceiling", () => {
+    const prompt =
+      "请规划 2026-08-15 至 2026-08-19 的自驾旅行，每天自驾不超过 6 小时。";
+    const legs = [
+      {
+        order: 0,
+        originName: "北京",
+        destinationName: "元上都遗址",
+        routeMinutes: 342,
+        mode: "driving",
+        latestDepartAt: new Date("2026-08-15T00:00:00.000Z"),
+        targetArriveAt: new Date("2026-08-15T05:42:00.000Z"),
+      },
+      {
+        order: 1,
+        originName: "元上都遗址",
+        destinationName: "多伦",
+        routeMinutes: 48,
+        mode: "driving",
+        latestDepartAt: new Date("2026-08-15T07:00:00.000Z"),
+        targetArriveAt: new Date("2026-08-15T07:48:00.000Z"),
+      },
+    ];
+
+    expect(
+      findDailyDrivingLimitViolation({
+        prompt,
+        timezone: "Asia/Shanghai",
+        legs,
+      })
+    ).toEqual({
+      date: "2026-08-15",
+      drivingMinutes: 390,
+      limitMinutes: 360,
+    });
+
+    expect(() =>
+      assertTravelItinerarySchedule({
+        prompt,
+        timezone: "Asia/Shanghai",
+        legs,
+      })
+    ).toThrow(/累计自驾约 6\.5 小时，超过用户指定的每日上限 6\.0 小时/);
+  });
+
+  it("allows a day at or below the explicit self-drive ceiling", () => {
+    const prompt =
+      "请规划 2026-08-15 至 2026-08-19 的自驾旅行，每日驾驶上限 6 小时。";
+    const legs = [
+      {
+        originName: "北京",
+        destinationName: "中途站",
+        routeMinutes: 300,
+        mode: "driving",
+        latestDepartAt: new Date("2026-08-15T00:00:00.000Z"),
+        targetArriveAt: new Date("2026-08-15T05:00:00.000Z"),
+      },
+      {
+        originName: "中途站",
+        destinationName: "目的地",
+        routeMinutes: 60,
+        mode: "driving",
+        latestDepartAt: new Date("2026-08-15T06:00:00.000Z"),
+        targetArriveAt: new Date("2026-08-15T07:00:00.000Z"),
+      },
+    ];
+
+    expect(
+      findDailyDrivingLimitViolation({
+        prompt,
+        timezone: "Asia/Shanghai",
+        legs,
+      })
+    ).toBeUndefined();
   });
 
   it("rebases model times into a chronological daytime itinerary", () => {

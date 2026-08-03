@@ -164,7 +164,10 @@ export function SettingsForm({ values }: { values: SettingsValues }) {
     DEFAULT_PLANNING_MODEL;
   const [model, setModel] = useState<string>(initialModel);
   const [modelTestStatus, setModelTestStatus] = useState("");
-  const [testingModel, setTestingModel] = useState(false);
+  const [travelModelTestStatus, setTravelModelTestStatus] = useState("");
+  const [testingModel, setTestingModel] = useState<"commute" | "travel" | null>(
+    null
+  );
   const [telegramChatId, setTelegramChatId] = useState(values.telegramChatId);
   const [emailRecipient, setEmailRecipient] = useState(values.emailRecipient);
   const [telegramTestStatus, setTelegramTestStatus] = useState("");
@@ -182,19 +185,28 @@ export function SettingsForm({ values }: { values: SettingsValues }) {
   const selectedModelLabel =
     PLANNING_MODEL_OPTIONS.find(([value]) => value === model)?.[1] ?? model;
 
-  async function testModelConnection() {
+  async function testModelConnection(target: "commute" | "travel") {
     if (testingModel) {
       return;
     }
 
-    setModelTestStatus("");
-    setTestingModel(true);
+    const targetModel = target === "travel" ? TRAVEL_PLANNING_MODEL : model;
+    const targetLabel =
+      target === "travel"
+        ? PLANNING_MODEL_OPTIONS.find(([value]) => value === TRAVEL_PLANNING_MODEL)?.[1] ??
+          TRAVEL_PLANNING_MODEL
+        : selectedModelLabel;
+    const setTargetStatus =
+      target === "travel" ? setTravelModelTestStatus : setModelTestStatus;
+
+    setTargetStatus("");
+    setTestingModel(target);
 
     try {
       const response = await fetch("/api/settings/test-model", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model }),
+        body: JSON.stringify({ model: targetModel }),
       });
       const payload = await response.json().catch(() => ({}));
       const result = payload.result as
@@ -204,16 +216,16 @@ export function SettingsForm({ values }: { values: SettingsValues }) {
       if (response.ok && result?.status === "connected") {
         const latency =
           typeof result.latencyMs === "number" ? `，耗时 ${result.latencyMs}ms` : "";
-        setModelTestStatus(`接入成功：${selectedModelLabel}${latency}`);
+        setTargetStatus(`接入成功：${targetLabel}${latency}`);
       } else {
-        setModelTestStatus(
+        setTargetStatus(
           result?.error ?? payload.error ?? "模型接入失败，请检查服务器配置。"
         );
       }
     } catch {
-      setModelTestStatus("模型接入失败，请检查服务器配置或网络。");
+      setTargetStatus("模型接入失败，请检查服务器配置或网络。");
     } finally {
-      setTestingModel(false);
+      setTestingModel(null);
     }
   }
 
@@ -369,11 +381,11 @@ export function SettingsForm({ values }: { values: SettingsValues }) {
               <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
                 <button
                   className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#dae2fd] px-4 py-2.5 text-sm font-semibold text-[#1d3d7c] transition hover:bg-[#bec6e0] disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={testingModel}
-                  onClick={() => void testModelConnection()}
+                  disabled={testingModel !== null}
+                  onClick={() => void testModelConnection("commute")}
                   type="button"
                 >
-                  {testingModel ? (
+                  {testingModel === "commute" ? (
                     <Loader2 aria-hidden="true" className="size-4 animate-spin" />
                   ) : (
                     <PlugZap aria-hidden="true" className="size-4" />
@@ -388,10 +400,33 @@ export function SettingsForm({ values }: { values: SettingsValues }) {
               </div>
             </div>
             <div className="mt-3 rounded-2xl border border-[#c6d5ff] bg-[#eef3ff] p-4 text-sm text-[#1d3d7c]">
-              <p className="font-semibold">旅行规划模型：DeepSeek V4 Flash</p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-semibold">旅行规划模型：DeepSeek V4 Flash</p>
+                <span className="font-semibold">固定模型</span>
+              </div>
               <p className="mt-1 leading-5">
                 旅行请求固定接入 {TRAVEL_PLANNING_MODEL}，不受上面的通勤模型选择影响。
               </p>
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+                <button
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-2.5 text-sm font-semibold text-[#1d3d7c] ring-1 ring-inset ring-[#c6d5ff] transition hover:bg-[#f7f9ff] disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={testingModel !== null}
+                  onClick={() => void testModelConnection("travel")}
+                  type="button"
+                >
+                  {testingModel === "travel" ? (
+                    <Loader2 aria-hidden="true" className="size-4 animate-spin" />
+                  ) : (
+                    <PlugZap aria-hidden="true" className="size-4" />
+                  )}
+                  测试旅行模型接入
+                </button>
+                {travelModelTestStatus ? (
+                  <p className="text-sm font-medium text-[#1d3d7c]" role="status">
+                    {travelModelTestStatus}
+                  </p>
+                ) : null}
+              </div>
             </div>
           </div>
         </section>

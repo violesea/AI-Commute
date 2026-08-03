@@ -57,14 +57,11 @@ function formatWeatherObservedAt(value?: string) {
 }
 
 function formatWeatherCoverage(plan: TravelPlan) {
-  const dates = (plan.weather.forecast ?? [])
-    .map((forecast) => forecast.date)
-    .filter((date): date is string => Boolean(date))
-    .sort();
+  if (plan.weather.forecastAvailableThrough) {
+    return `截至 ${plan.weather.forecastAvailableThrough}`;
+  }
 
-  if (dates.length === 0) return "未提供日期范围";
-  if (dates.length === 1) return dates[0];
-  return `${dates[0]} 至 ${dates[dates.length - 1]}`;
+  return "未记录当前预报边界，按每次刷新结果执行";
 }
 
 function recommendationEvidenceLabel(
@@ -214,7 +211,7 @@ export function TravelPlanCard({ plan }: { plan: TravelPlan }) {
           <span>
             最近天气刷新：{formatWeatherObservedAt(plan.weather.observedAt)}
           </span>
-          <span>预报覆盖：{formatWeatherCoverage(plan)}</span>
+          <span>当前可用预报：{formatWeatherCoverage(plan)}</span>
         </div>
         {plan.weather.forecast?.length ? (
           <div className="mt-4 rounded-2xl bg-white/60 p-4">

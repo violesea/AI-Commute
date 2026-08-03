@@ -468,6 +468,7 @@ describe("sample-aligned UI components", () => {
             summary: "多云，24°C",
             advice: "自然景点留意降雨",
             source: "高德天气参考",
+            forecastAvailableThrough: "2026-08-06",
             dynamicMonitoring: true,
             refreshPolicy: "出发前和每次路线复查",
             forecast: [
@@ -544,6 +545,7 @@ describe("sample-aligned UI components", () => {
 
     expect(html).toContain("旅行规划");
     expect(html).toContain("天气参考");
+    expect(html).toContain("当前可用预报：截至 2026-08-06");
     expect(html).toContain("自驾天气动态监控已开启");
     expect(html).toContain("最近天气刷新：未记录");
     expect(html).toContain("证据：AI建议，出发前核验");
@@ -1821,6 +1823,52 @@ describe("sample-aligned UI components", () => {
       );
     });
     await screen.findByText("接入成功：DeepSeek V4 Flash，耗时 42ms");
+  });
+
+  it("tests the fixed travel planning model separately", async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url) === "/api/settings/test-model" && init?.method === "POST") {
+        return Response.json({
+          result: {
+            status: "connected",
+            model: "deepseek-v4-flash",
+            latencyMs: 55,
+          },
+        });
+      }
+
+      return Response.json({ error: "unexpected request" }, { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <SettingsForm
+        values={{
+          defaultCity: "宁波",
+          timezone: "Asia/Shanghai",
+          model: "gpt-4o-mini",
+          modelConfigured: true,
+          originName: "",
+          originLngLat: "",
+          routePreference: "balanced",
+          telegramChatId: "",
+          emailRecipient: "",
+        }}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "测试旅行模型接入" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/settings/test-model",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ model: "deepseek-v4-flash" }),
+        })
+      );
+    });
+    await screen.findByText("接入成功：DeepSeek V4 Flash，耗时 55ms");
   });
 
   it("shows detailed test notification failures in settings", async () => {

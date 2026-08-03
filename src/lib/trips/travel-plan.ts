@@ -50,6 +50,7 @@ export type TravelPlanWeather = {
   advice: string;
   source?: string;
   observedAt?: string;
+  forecastAvailableThrough?: string;
   dynamicMonitoring?: boolean;
   refreshPolicy?: string;
   forecast?: TravelWeatherForecast[];
@@ -510,6 +511,12 @@ export function normalizeTravelPlan(value: unknown): TravelPlan {
       observedAt: readText(
         weather,
         "observedAt",
+        "travelPlan.weather",
+        false
+      ),
+      forecastAvailableThrough: readText(
+        weather,
+        "forecastAvailableThrough",
         "travelPlan.weather",
         false
       ),

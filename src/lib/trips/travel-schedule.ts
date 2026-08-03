@@ -154,6 +154,40 @@ export function parseTravelDateRange(prompt: string): TravelDateRange | null {
   );
 }
 
+const DAILY_DRIVING_LIMIT_PATTERN =
+  /(?:每天|每日|单日|日均)[^。！？\n]{0,24}?(?:自驾|驾车|驾驶|开车|行车)[^。！？\n]{0,12}?(?:不超过|最多|上限(?:为)?|控制在)[^。！？\n]{0,8}?(\d+(?:\.\d+)?)\s*(小时|h|分钟|min)/i;
+const DAILY_DRIVING_LIMIT_REVERSED_PATTERN =
+  /(?:每天|每日|单日|日均)[^。！？\n]{0,24}?(?:不超过|最多|上限(?:为)?|控制在)[^。！？\n]{0,8}?(\d+(?:\.\d+)?)\s*(小时|h|分钟|min)[^。！？\n]{0,12}?(?:自驾|驾车|驾驶|开车|行车)/i;
+
+function durationToMinutes(value: string, unit: string) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return undefined;
+
+  const normalizedUnit = unit.toLowerCase();
+  const minutes = normalizedUnit === "小时" || normalizedUnit === "h"
+    ? numeric * 60
+    : numeric;
+
+  return minutes > 0 && minutes <= 24 * 60 ? Math.round(minutes) : undefined;
+}
+
+/**
+ * Reads an explicit daily self-drive ceiling from the user's request.
+ * An omitted ceiling deliberately remains undefined so ordinary travel plans
+ * keep the existing comfort-threshold warning instead of being rejected.
+ */
+export function parseDailyDrivingLimitMinutes(prompt: string) {
+  const compactPrompt = prompt.replace(/\s+/g, "");
+  const match = compactPrompt.match(DAILY_DRIVING_LIMIT_PATTERN);
+  const reversedMatch = compactPrompt.match(DAILY_DRIVING_LIMIT_REVERSED_PATTERN);
+  const captured = match ?? reversedMatch;
+
+  if (!captured) return undefined;
+
+  const [, value, unit] = captured;
+  return durationToMinutes(value, unit);
+}
+
 function parsePromptStartClock(prompt: string) {
   const clockMatch = prompt.match(
     /(?:出发|启程|开始|返程|回程)[^\n，。；;]{0,12}?(\d{1,2})[:：](\d{2})/
@@ -456,6 +490,11 @@ export function assertTravelItinerarySchedule(input: {
       formatDaylightConstraintError(daylightViolation, input.timezone)
     );
   }
+
+  const dailyDrivingViolation = findDailyDrivingLimitViolation(input);
+  if (dailyDrivingViolation) {
+    throw new Error(formatDailyDrivingConstraintError(dailyDrivingViolation));
+  }
 }
 
 function isDrivingLeg(leg: PlannedTripLegInput) {
@@ -470,6 +509,56 @@ function isDrivingLeg(leg: PlannedTripLegInput) {
       .filter(Boolean)
       .join(" ")
   );
+}
+
+export type DailyDrivingLimitViolation = {
+  date: string;
+  drivingMinutes: number;
+  limitMinutes: number;
+};
+
+export function findDailyDrivingLimitViolation(input: {
+  prompt: string;
+  timezone: string;
+  legs: PlannedTripLegInput[];
+}): DailyDrivingLimitViolation | undefined {
+  const limitMinutes = parseDailyDrivingLimitMinutes(input.prompt);
+  if (!limitMinutes) return undefined;
+
+  const dailyDriving = new Map<string, number>();
+  for (const leg of input.legs) {
+    if (!isDrivingLeg(leg) || !leg.latestDepartAt) continue;
+
+    const date = formatInTimeZone(
+      leg.latestDepartAt,
+      input.timezone || DEFAULT_TIME_ZONE,
+      "yyyy-MM-dd"
+    );
+    dailyDriving.set(
+      date,
+      (dailyDriving.get(date) ?? 0) + Math.max(0, Math.round(leg.routeMinutes))
+    );
+  }
+
+  const violation = [...dailyDriving.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .find(([, drivingMinutes]) => drivingMinutes > limitMinutes);
+
+  return violation
+    ? {
+        date: violation[0],
+        drivingMinutes: violation[1],
+        limitMinutes,
+      }
+    : undefined;
+}
+
+function formatDailyDrivingConstraintError(
+  violation: DailyDrivingLimitViolation
+) {
+  const drivingHours = (violation.drivingMinutes / 60).toFixed(1);
+  const limitHours = (violation.limitMinutes / 60).toFixed(1);
+  return `${violation.date} 累计自驾约 ${drivingHours} 小时，超过用户指定的每日上限 ${limitHours} 小时。请把途中转场拆到下一天、增加中途住宿、减少景点或调整路线后重新调用 create_trip。`;
 }
 
 const DAYLIGHT_DRIVING_PATTERNS = [

@@ -15,6 +15,7 @@ const sampleTravelPlan = {
     summary: "多云，24°C",
     advice: "自然景点留意降雨",
     source: "高德天气参考",
+    forecastAvailableThrough: "2026-08-06",
     dynamicMonitoring: true,
     refreshPolicy: "出发前和每次路线复查",
     forecast: [
@@ -196,6 +197,7 @@ describe("travel plan normalization", () => {
 
   it("fills missing weather entries for every itinerary date", () => {
     const plan = normalizeTravelPlan(sampleTravelPlan);
+    expect(plan.weather.forecastAvailableThrough).toBe("2026-08-06");
     const covered = ensureTravelPlanWeatherCoverage(plan, {
       startDate: "2026-08-08",
       endDate: "2026-08-11",
