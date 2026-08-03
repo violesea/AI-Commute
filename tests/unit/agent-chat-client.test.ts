@@ -236,6 +236,52 @@ describe("createOpenAiChatClient", () => {
     completionMock.mockReset();
   });
 
+  it("retries a transient premature-close transport failure once", async () => {
+    completionMock
+      .mockRejectedValueOnce(new Error("Premature close"))
+      .mockResolvedValueOnce({
+        choices: [{ message: { content: "重试成功" } }],
+      });
+
+    const client = createOpenAiChatClient({
+      OPENAI_API_KEY: "test-key",
+      OPENAI_BASE_URL: "https://api.deepseek.com/v1",
+    });
+
+    await expect(
+      client.complete({
+        messages: [{ role: "user", content: "规划旅行" }],
+        tools: [],
+        model: "deepseek-v4-flash",
+        purpose: "travel",
+      })
+    ).resolves.toMatchObject({
+      message: { content: "重试成功" },
+    });
+    expect(completionMock).toHaveBeenCalledTimes(2);
+    completionMock.mockReset();
+  });
+
+  it("does not retry a non-transport model error", async () => {
+    completionMock.mockRejectedValueOnce(new Error("invalid request"));
+
+    const client = createOpenAiChatClient({
+      OPENAI_API_KEY: "test-key",
+      OPENAI_BASE_URL: "https://api.deepseek.com/v1",
+    });
+
+    await expect(
+      client.complete({
+        messages: [{ role: "user", content: "规划旅行" }],
+        tools: [],
+        model: "deepseek-v4-flash",
+        purpose: "travel",
+      })
+    ).rejects.toThrow("invalid request");
+    expect(completionMock).toHaveBeenCalledTimes(1);
+    completionMock.mockReset();
+  });
+
   it("keeps verbose assistant reasoning out of later model prompts while preserving tool calls", async () => {
     completionMock.mockResolvedValueOnce({
       choices: [{ message: { content: "已完成" } }],

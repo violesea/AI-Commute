@@ -329,7 +329,7 @@ const EXPLICIT_CLOCK_PATTERNS = [
 const SCHEDULE_CLOCK_TOKEN = "__SCHEDULE_CLOCK__";
 const STRUCTURED_SCHEDULE_PLACEHOLDER = /按行程结构化时间\s*[-–—至]\s*按行程结构化时间(?:\s*游览)?/g;
 
-function normalizeScheduledText(value?: string) {
+export function normalizeScheduledText(value?: string) {
   if (!value) return value;
 
   let text = EXPLICIT_CLOCK_PATTERNS.reduce(

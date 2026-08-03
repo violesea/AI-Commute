@@ -6,6 +6,7 @@ import {
   findDailyDrivingLimitViolation,
   isTravelDayMarker,
   normalizeTravelItinerarySchedule,
+  normalizeScheduledText,
   parseDateTimeInTimeZone,
   parseDailyDrivingLimitMinutes,
   parseTravelDateRange,
@@ -18,6 +19,14 @@ function localTime(date: Date | undefined) {
 }
 
 describe("travel itinerary schedule", () => {
+  it("removes internal schedule placeholders from historical route text", () => {
+    expect(
+      normalizeScheduledText("按行程结构化时间-按行程结构化时间游览")
+    ).toBe("按行程安排");
+    expect(normalizeScheduledText("08:00-10:30 驾车到景点")).toBe("驾车到景点");
+    expect(normalizeScheduledText(undefined)).toBeUndefined();
+  });
+
   it("recognizes standalone day markers used as itinerary metadata", () => {
     expect(isTravelDayMarker("D1")).toBe(true);
     expect(isTravelDayMarker("Day 2")).toBe(true);

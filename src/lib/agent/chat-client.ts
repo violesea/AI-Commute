@@ -62,6 +62,20 @@ type EnvSource = Partial<Record<string, string | undefined>>;
 const AGENT_MAX_OUTPUT_TOKENS = 32768;
 export const TRAVEL_MAX_OUTPUT_TOKENS = 16384;
 const MAX_ASSISTANT_CONTEXT_CHARS = 1200;
+const TRANSIENT_CHAT_RETRY_DELAY_MS = 150;
+
+function isTransientChatTransportError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /premature close|socket hang up|econnreset|etimedout|fetch failed/i.test(
+    message
+  );
+}
+
+function waitBeforeChatRetry() {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, TRANSIENT_CHAT_RETRY_DELAY_MS);
+  });
+}
 
 type JsonSchemaRecord = Record<string, unknown>;
 
@@ -306,9 +320,30 @@ export function createOpenAiChatClient(
       } as Parameters<typeof client.chat.completions.create>[0] & {
         thinking?: DeepSeekThinking;
       };
-      const completion = (await activeClient.chat.completions.create(requestBody, {
-        signal: input.signal,
-      })) as OpenAI.Chat.Completions.ChatCompletion;
+      const requestCompletion = () =>
+        activeClient.chat.completions.create(requestBody, {
+          signal: input.signal,
+        });
+      let completion: OpenAI.Chat.Completions.ChatCompletion;
+
+      try {
+        completion = (await requestCompletion()) as OpenAI.Chat.Completions.ChatCompletion;
+      } catch (error) {
+        if (!isTransientChatTransportError(error) || input.signal?.aborted) {
+          throw error;
+        }
+
+        console.warn(
+          "[agent-model-retry]",
+          JSON.stringify({
+            model,
+            purpose: input.purpose ?? "planning",
+            reason: error instanceof Error ? error.message : String(error),
+          })
+        );
+        await waitBeforeChatRetry();
+        completion = (await requestCompletion()) as OpenAI.Chat.Completions.ChatCompletion;
+      }
 
       const choice = completion.choices[0];
       const message = choice?.message;

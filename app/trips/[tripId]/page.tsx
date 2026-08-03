@@ -32,6 +32,7 @@ import {
 } from "@/lib/trips/monitoring";
 import { buildMapPath } from "@/lib/trips/map-path";
 import { toPublicTripShareData } from "@/lib/trips/share-view";
+import { normalizeScheduledText } from "@/lib/trips/travel-schedule";
 import {
   alignTravelPlanAttractionsWithRoute,
   getTravelRouteStats,
@@ -190,8 +191,8 @@ export default async function TripDetailPage({
     segments: leg.routeSegments.map((segment) => ({
       id: segment.id,
       mode: segment.mode,
-      title: segment.title,
-      detail: segment.detail,
+      title: normalizeScheduledText(segment.title) || "路线分段",
+      detail: normalizeScheduledText(segment.detail ?? undefined),
       minutes: segment.minutes,
     })),
   }));

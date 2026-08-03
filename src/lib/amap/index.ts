@@ -10,6 +10,18 @@ type AmapClientFactoryOptions = {
   realClient?: AmapClient;
 };
 
+const DEFAULT_REQUESTS_PER_SECOND = 3;
+const MAX_REQUESTS_PER_SECOND = 3;
+
+function readRequestsPerSecond(source: EnvSource) {
+  const parsed = Number(source.AMAP_REQUESTS_PER_SECOND);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_REQUESTS_PER_SECOND;
+  }
+
+  return Math.min(MAX_REQUESTS_PER_SECOND, Math.max(1, Math.floor(parsed)));
+}
+
 export function createAmapClient(
   source: EnvSource = process.env,
   options: AmapClientFactoryOptions = {}
@@ -31,7 +43,9 @@ export function createAmapClient(
     options.realClient ??
     createRealAmapClient({
       apiKey,
-      throttle: createAmapThrottle({ requestsPerSecond: 1 })
+      throttle: createAmapThrottle({
+        requestsPerSecond: readRequestsPerSecond(source),
+      }),
     });
 
   return realClient;

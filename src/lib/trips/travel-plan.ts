@@ -17,6 +17,11 @@ export type TravelRecommendationVerification =
 
 export type TravelAttractionRouteStatus = "planned" | "alternative";
 
+export type TravelRouteCoverage = {
+  plannedAttractions: string[];
+  alternativeAttractions: string[];
+};
+
 export type TravelRecommendationEvidence = {
   source: TravelRecommendationSource;
   status: TravelRecommendationVerification;
@@ -132,6 +137,7 @@ export type TravelPlan = {
   destination: string;
   summary: string;
   days?: number;
+  routeCoverage?: TravelRouteCoverage;
   weather: TravelPlanWeather;
   transport: TravelTransport;
   budget?: TravelBudget;
@@ -362,6 +368,27 @@ function readOptionalArray(
   }
 
   return readArray(record, key, label);
+}
+
+function readOptionalStringArray(
+  record: Record<string, unknown>,
+  key: string,
+  label: string
+) {
+  const value = record[key];
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (!Array.isArray(value)) {
+    throw new Error(`${label}.${key} must be an array.`);
+  }
+
+  return value.filter(
+    (item): item is string =>
+      typeof item === "string" && item.trim().length > 0
+  )
+    .map((item) => item.trim());
 }
 
 function normalizeWeatherRisk(value: unknown): TravelWeatherRisk {
@@ -649,6 +676,9 @@ export function normalizeTravelPlan(value: unknown): TravelPlan {
   const record = readRecord(value, "travelPlan");
   const destination = readText(record, "destination", "travelPlan")!;
   const summary = readText(record, "summary", "travelPlan")!;
+  const routeCoverageRecord = isRecord(record.routeCoverage)
+    ? record.routeCoverage
+    : undefined;
   const weather = readJsonRecord(record.weather, "travelPlan.weather");
   const transport = readJsonRecord(record.transport, "travelPlan.transport");
   const recommended = readText(
@@ -680,6 +710,22 @@ export function normalizeTravelPlan(value: unknown): TravelPlan {
     destination,
     summary,
     days: readOptionalNumber(record, "days"),
+    routeCoverage: routeCoverageRecord
+      ? {
+          plannedAttractions:
+            readOptionalStringArray(
+              routeCoverageRecord,
+              "plannedAttractions",
+              "travelPlan.routeCoverage"
+            ) ?? [],
+          alternativeAttractions:
+            readOptionalStringArray(
+              routeCoverageRecord,
+              "alternativeAttractions",
+              "travelPlan.routeCoverage"
+            ) ?? [],
+        }
+      : undefined,
     weather: {
       city: readText(weather, "city", "travelPlan.weather")!,
       summary: weatherSummary,
@@ -839,14 +885,24 @@ export function alignTravelPlanAttractionsWithRoute(
   stops: readonly TravelPlanRouteStop[],
   legs: readonly TravelPlanRouteLeg[]
 ): TravelPlan {
+  const attractions = plan.attractions.map((attraction) => ({
+    ...attraction,
+    routeStatus: isPlannedAttraction(attraction, stops, legs)
+      ? ("planned" as const)
+      : ("alternative" as const),
+  }));
+
   return {
     ...plan,
-    attractions: plan.attractions.map((attraction) => ({
-      ...attraction,
-      routeStatus: isPlannedAttraction(attraction, stops, legs)
-        ? "planned"
-        : "alternative",
-    })),
+    attractions,
+    routeCoverage: {
+      plannedAttractions: attractions
+        .filter((attraction) => attraction.routeStatus === "planned")
+        .map((attraction) => attraction.name),
+      alternativeAttractions: attractions
+        .filter((attraction) => attraction.routeStatus === "alternative")
+        .map((attraction) => attraction.name),
+    },
   };
 }
 

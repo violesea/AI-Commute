@@ -157,6 +157,25 @@ describe("travel plan normalization", () => {
         .filter((attraction) => attraction.routeStatus === "planned")
         .map((attraction) => attraction.name)
     ).toEqual(["东钱湖"]);
+    expect(aligned.routeCoverage).toEqual({
+      plannedAttractions: ["东钱湖"],
+      alternativeAttractions: ["四明山", "松兰山", "天一阁"],
+    });
+  });
+
+  it("normalizes persisted route coverage without treating it as route evidence", () => {
+    const normalized = normalizeTravelPlan({
+      ...sampleTravelPlan,
+      routeCoverage: {
+        plannedAttractions: [" 东钱湖 ", ""],
+        alternativeAttractions: ["天一阁", 12],
+      },
+    });
+
+    expect(normalized.routeCoverage).toEqual({
+      plannedAttractions: ["东钱湖"],
+      alternativeAttractions: ["天一阁"],
+    });
   });
 
   it("fills missing transport fields only from both queried route results", () => {

@@ -196,7 +196,24 @@ export function TravelPlanCard({
               {plan.destination}
               {plan.days ? ` · ${plan.days} 天` : ""}
             </h2>
-            <p className="mt-2 text-sm leading-6 text-[#434655]">{plan.summary}</p>
+            <p className="mt-2 text-sm leading-6 text-[#434655]">
+              AI 规划说明：{plan.summary}
+            </p>
+            {plan.routeCoverage ? (
+              <div className="mt-3 rounded-2xl border border-[#86efac]/60 bg-[#f0fdf4] px-4 py-3 text-xs leading-5 text-[#166534]">
+                <p className="font-bold">本次路线覆盖</p>
+                <p className="mt-1">
+                  {plan.routeCoverage.plannedAttractions.length > 0
+                    ? plan.routeCoverage.plannedAttractions.join("、")
+                    : "暂无景点已安排进结构化路线"}
+                </p>
+                {plan.routeCoverage.alternativeAttractions.length > 0 ? (
+                  <p className="mt-1 text-[#92400e]">
+                    备选，不计入本次覆盖：{plan.routeCoverage.alternativeAttractions.join("、")}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
             {routeStats ? (
               <div className="mt-4 rounded-2xl border border-[#93c5fd]/60 bg-[#eff6ff] px-4 py-3 text-xs leading-5 text-[#1e40af]">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -435,7 +452,7 @@ export function TravelPlanCard({
             本次路线已安排 {plan.attractions.filter((attraction) => attraction.routeStatus === "planned").length} 个景点，备选 / 顺路可选 {plan.attractions.filter((attraction) => attraction.routeStatus !== "planned").length} 个景点。
           </p>
           <p className="mt-1">
-            “已安排”只认结构化 stops 和关联路线段；未进入实际路线的推荐仅供调整行程时选择。
+            “已安排”只认结构化 stops 和关联路线段；未进入实际路线的推荐仅供调整行程时选择，不计入本次覆盖。
           </p>
         </div>
         <div className="mt-4 grid gap-4 md:grid-cols-2">

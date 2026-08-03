@@ -1943,10 +1943,11 @@ async function executeToolCall(
       name,
       request,
       run: async () => {
-        const batches = [];
-        for (const keywords of NATURAL_ATTRACTION_SEARCH_GROUPS) {
-          batches.push(await amap.searchPoi({ keywords, city }));
-        }
+        const batches = await Promise.all(
+          NATURAL_ATTRACTION_SEARCH_GROUPS.map((keywords) =>
+            amap.searchPoi({ keywords, city })
+          )
+        );
         const seen = new Set<string>();
 
         return batches

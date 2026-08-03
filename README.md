@@ -240,6 +240,7 @@ npm run email:test-route-change
 - `DEFAULT_CITY`：默认城市。
 - `DEFAULT_TIMEZONE`：默认时区，例如 `Asia/Shanghai`。
 - `AMAP_API_KEY`：高德 Web Service Key；留空时使用 mock AMap client。
+- `AMAP_REQUESTS_PER_SECOND`：高德请求并发窗口，默认 3，范围限制为 1-3。
 - `OPENAI_API_KEY`：兼容 OpenAI 的规划运行器凭证；留空时使用内置 fallback planner。
 - `OPENAI_BASE_URL`：兼容 OpenAI 接口的自定义 base URL。
 - `OPENAI_MODEL`：规划运行器模型名。
@@ -248,7 +249,7 @@ npm run email:test-route-change
 - `SCHEDULER_TICK_SECRET`：保护 scheduler tick API 的 shared secret。生产环境建议显式配置一段足够长的随机字符串；如果生产环境为空，Web 进程会自动生成临时内存密钥以避免公网 tick API 裸奔。需要外部手动调用 tick API 时，请配置固定密钥。
 - `TELEGRAM_BOT_TOKEN`：Telegram bot token。
 
-> 高德api网址：https://console.amap.com/dev/index  每月有免费配额，完全足够个人使用，本项目已限制并发为3。
+> 高德api网址：https://console.amap.com/dev/index  每月有免费配额，完全足够个人使用。本项目默认限制为 3 QPS，可通过 `AMAP_REQUESTS_PER_SECOND` 调低。
 
 ## 测试
 
