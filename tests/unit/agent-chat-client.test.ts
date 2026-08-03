@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createFallbackChatClient,
   createOpenAiChatClient,
+  TRAVEL_MAX_OUTPUT_TOKENS,
 } from "@/lib/agent/chat-client";
 import type { AgentChatMessage } from "@/lib/agent/chat-client";
 
@@ -202,6 +203,31 @@ describe("createOpenAiChatClient", () => {
 
     expect(completionMock).toHaveBeenCalledWith(
       expect.objectContaining({ max_tokens: 32768 }),
+      expect.objectContaining({ signal: undefined })
+    );
+    completionMock.mockReset();
+  });
+
+  it("allows travel planning to use a bounded structured-output budget", async () => {
+    completionMock.mockResolvedValueOnce({
+      choices: [{ message: { content: "已完成" } }],
+    });
+
+    const client = createOpenAiChatClient({
+      OPENAI_API_KEY: "test-key",
+      OPENAI_BASE_URL: "https://api.deepseek.com/v1",
+    });
+
+    await client.complete({
+      messages: [{ role: "user", content: "规划北京到锡林郭勒五天旅行" }],
+      tools: [],
+      model: "deepseek-v4-flash",
+      purpose: "travel",
+      maxOutputTokens: TRAVEL_MAX_OUTPUT_TOKENS,
+    });
+
+    expect(completionMock).toHaveBeenCalledWith(
+      expect.objectContaining({ max_tokens: TRAVEL_MAX_OUTPUT_TOKENS }),
       expect.objectContaining({ signal: undefined })
     );
     completionMock.mockReset();

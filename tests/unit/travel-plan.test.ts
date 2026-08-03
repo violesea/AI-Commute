@@ -3,6 +3,7 @@ import {
   assertTravelPlanAttractionCoverage,
   assertTravelPlanOperationalCompleteness,
   ensureTravelPlanWeatherCoverage,
+  getTravelRouteStats,
   normalizeTravelPlan,
   parseTravelPlanJson,
 } from "@/lib/trips/travel-plan";
@@ -115,6 +116,49 @@ const sampleTravelPlan = {
 };
 
 describe("travel plan normalization", () => {
+  it("uses structured route legs as the canonical driving statistics", () => {
+    expect(
+      getTravelRouteStats(
+        [
+          {
+            order: 2,
+            routeMinutes: 179,
+            bufferMinutes: 12,
+            totalMinutes: 191,
+            mode: "driving",
+            latestDepartAt: "2026-08-10T00:00:00.000Z",
+          },
+          {
+            order: 1,
+            routeMinutes: 262,
+            bufferMinutes: 15,
+            totalMinutes: 277,
+            mode: "driving",
+            latestDepartAt: "2026-08-08T00:00:00.000Z",
+          },
+          {
+            order: 3,
+            routeMinutes: 742,
+            bufferMinutes: 20,
+            totalMinutes: 762,
+            mode: "transit",
+            latestDepartAt: "2026-08-10T02:00:00.000Z",
+          },
+        ],
+        "Asia/Shanghai"
+      )
+    ).toEqual({
+      totalRouteMinutes: 1183,
+      totalBufferMinutes: 47,
+      totalMinutes: 1230,
+      totalDrivingMinutes: 441,
+      dailyDrivingMinutes: [
+        { date: "2026-08-08", minutes: 262, legOrders: [1] },
+        { date: "2026-08-10", minutes: 179, legOrders: [2] },
+      ],
+    });
+  });
+
   it("normalizes agent JSON into the persisted display shape", () => {
     expect(normalizeTravelPlan(sampleTravelPlan)).toMatchObject({
       destination: "宁波",

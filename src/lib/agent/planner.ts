@@ -10,6 +10,7 @@ import type {
 } from "@/lib/agent/chat-client";
 import {
   createOpenAiChatClient,
+  TRAVEL_MAX_OUTPUT_TOKENS,
   TRAVEL_PLANNING_MODEL,
 } from "@/lib/agent/chat-client";
 import {
@@ -114,6 +115,11 @@ type PlanningSettings = {
   routePreference: string;
 };
 
+type TravelEvidenceBudget = {
+  maxDirectPoiSearches: number;
+  directPoiSearches: number;
+};
+
 export type RunPlanningSessionOptions = {
   chatClient?: AgentChatClient;
   amapClient?: AmapClient;
@@ -127,6 +133,8 @@ type ToolExecutionContext = {
   purpose: AgentPlanningPurpose;
   tripId?: string | null;
   signal?: AbortSignal;
+  toolResultCache: Map<string, unknown>;
+  travelEvidenceBudget?: TravelEvidenceBudget;
 };
 
 const fallbackSettings = (): PlanningSettings => {
@@ -888,7 +896,7 @@ Use read_settings for the default city, timezone, and origin, and use the curren
 Self-driving is a time-varying process. Before calling get_transit_route, get_driving_route, get_walking_route, or get_bicycling_route, resolve both endpoints to lng,lat coordinates with search_poi. Compare self-drive and public transit whenever the route is meaningfully comparable. Use get_driving_route for self-drive and get_transit_route for public transit, then choose driving, transit, or mixed with a reason. Treat route duration and weather as snapshots: avoid claiming that a route is guaranteed, and make bad-weather actions explicit, such as postponing an exposed segment, switching to transit, adding indoor stops, or checking road and parking conditions again.
 Natural scenery is a hard output requirement, not an optional extra. Call search_natural_attractions once before selecting attractions. It searches multiple nature categories for you. Recommend at least three distinct natural candidates for a one-to-three-day trip, at least four for a trip of four days or longer, and at least one cultural candidate. Cover different natural types when the destination supports them, such as mountain, lake, forest, wetland, coast, island, canyon, waterfall, park, or viewpoint, and set naturalType for every natural candidate. The application rejects a travel plan that has too few natural candidates or too little type diversity, so do not stop after finding one scenic spot. Use the evidence returned by tools; do not invent venue-specific facts.
 Search POIs before naming specific lodging or food venues. Explain the reason for every attraction, its best visiting time, suggested stay, and weather note. Add an evidence object to every attraction, lodging, and food recommendation: use source amap_poi only when it comes from a POI search, otherwise use agent_inference; mark prices, opening times, availability, and AI-only suggestions as needs_verification. Search practical lodging areas and local food options. Add at least three concrete pitfalls covering tickets/reservations, peak periods, parking or transit, weather, road conditions, and other destination-specific friction when relevant. The budget is mandatory: provide a total range and a breakdown for lodging, food, fuel/charging, tolls, tickets and other meaningful costs; mark uncertain prices as pending verification and state the assumptions such as party size and vehicle type.
-For a normal one-to-three-day request, keep evidence bounded but sufficient: make one initial weather call, one broad natural-attraction search, at most ten representative attraction or practical-place keyword searches plus one lodging and one food keyword, and call each main driving/transit comparison at most once. Once you have the weather forecast, at least three natural candidates, a cultural candidate, lodging, food, and both transport options, stop searching and immediately call create_trip. Do not search every possible option or repeat an equivalent route call.
+For a normal one-to-three-day request, keep evidence bounded but sufficient: make one initial weather call, one broad natural-attraction search, at most ten representative attraction or practical-place keyword searches plus one lodging and one food keyword, and call each main driving/transit comparison at most once. For trips of four days or longer, use one broad natural-attraction search, at most eight additional POI keyword searches, one practical lodging search, one food search, and one route call per unique itinerary leg; reuse coordinates and equivalent results already returned instead of searching again. Once you have the weather forecast, enough natural candidates, a cultural candidate, lodging, food, and both transport options, stop searching and immediately call create_trip. Do not search every possible option or repeat an equivalent route call.
 The create_trip call is mandatory. In travel mode it must include a complete travelPlan object with destination, summary, weather including forecast and routeRisks, transport.driving, transport.transit, budget, attractions, lodging, food, and pitfalls. Stops and legs must form a chronological itinerary; every leg must include explicit latestDepartAt and targetArriveAt in the requested date range, with no cross-midnight driving. If you provide explicit leg times, keep them consistent and chronological; otherwise use D1/Day1/第1天 markers so the server can safely group legs by calendar day. Use stop notes for day/order context and route rationale for transport decisions. Every travel leg gets a weather refresh task one hour before departure; the first leg also gets 72-hour and 24-hour refresh tasks. During a later route recheck, call get_weather_reference again before deciding. If weather, traffic, or road conditions change, update the route and pass the refreshed travelPlan to update_trip_summary or replace_trip_stops/replace_trip_legs so the visible plan stays consistent. If the server rejects a create or replacement because a daylight-driving leg arrives after the local sunset safety line or because the total driving minutes on a day exceed the user's explicit daily ceiling, do not repeat the same times: choose early return, add an intermediate overnight stop and split the leg, or shorten/remove the remote attraction, then call the route tool again.
 Final user-facing replies must be plain text without Markdown formatting, headings, code ticks, or list markers.`;
 
@@ -1120,6 +1128,100 @@ function normalizeLngLat(value: string) {
   return normalized;
 }
 
+function normalizeCacheValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    return value.trim().toLowerCase().replace(/\s+/g, " ");
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(normalizeCacheValue);
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, normalizeCacheValue(nested)])
+    );
+  }
+
+  return value;
+}
+
+function getToolCacheKey(name: AgentToolName, request: unknown) {
+  if (
+    name !== "search_poi" &&
+    name !== "search_natural_attractions" &&
+    name !== "get_poi_detail" &&
+    name !== "get_transit_route" &&
+    name !== "get_driving_route" &&
+    name !== "get_walking_route" &&
+    name !== "get_bicycling_route"
+  ) {
+    return null;
+  }
+
+  return `${name}:${JSON.stringify(normalizeCacheValue(request))}`;
+}
+
+function createTravelEvidenceBudget(
+  purpose: AgentPlanningPurpose,
+  prompt: string
+): TravelEvidenceBudget | undefined {
+  if (purpose !== "travel") return undefined;
+
+  const range = parseTravelDateRange(prompt);
+  const start = range ? new Date(`${range.startDate}T00:00:00Z`) : null;
+  const end = range ? new Date(`${range.endDate}T00:00:00Z`) : null;
+  const dayCount =
+    start && end && !Number.isNaN(start.getTime()) && !Number.isNaN(end.getTime())
+      ? Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1
+      : 0;
+
+  return {
+    maxDirectPoiSearches: dayCount >= 4 ? 8 : 10,
+    directPoiSearches: 0,
+  };
+}
+
+async function recordCachedToolCall<T>(input: {
+  context: ToolExecutionContext;
+  name: AgentToolName;
+  request: unknown;
+  run: () => Promise<T>;
+}) {
+  const cacheKey = getToolCacheKey(input.name, input.request);
+  if (!cacheKey) {
+    return recordToolCall({
+      agentSessionId: input.context.sessionId,
+      name: input.name,
+      request: input.request,
+      signal: input.context.signal,
+      run: input.run,
+    });
+  }
+
+  if (input.context.toolResultCache.has(cacheKey)) {
+    return recordToolCall({
+      agentSessionId: input.context.sessionId,
+      name: input.name,
+      request: input.request,
+      signal: input.context.signal,
+      run: async () => input.context.toolResultCache.get(cacheKey) as T,
+    });
+  }
+
+  const result = await recordToolCall({
+    agentSessionId: input.context.sessionId,
+    name: input.name,
+    request: input.request,
+    signal: input.context.signal,
+    run: input.run,
+  });
+  input.context.toolResultCache.set(cacheKey, result);
+  return result;
+}
+
 async function resolveRouteEndpoint(input: {
   value: string;
   label: "origin" | "destination";
@@ -1135,11 +1237,10 @@ async function resolveRouteEndpoint(input: {
     keywords: input.value,
     city: input.city,
   };
-  const pois = await recordToolCall({
-    agentSessionId: input.context.sessionId,
+  const pois = await recordCachedToolCall({
+    context: input.context,
     name: "search_poi",
     request,
-    signal: input.context.signal,
     run: () => input.context.amap.searchPoi(request),
   });
   const resolved = pois
@@ -1570,11 +1671,33 @@ async function executeToolCall(
       keywords: readString(args, "keywords"),
       city: readOptionalString(args, "city") ?? settings.defaultCity,
     };
-    return recordToolCall({
-      agentSessionId: context.sessionId,
+
+    const cacheKey = getToolCacheKey(name, request);
+    const budget = context.travelEvidenceBudget;
+    if (
+      budget &&
+      cacheKey &&
+      !context.toolResultCache.has(cacheKey)
+    ) {
+      if (budget.directPoiSearches >= budget.maxDirectPoiSearches) {
+        const emptyResult: Awaited<ReturnType<AmapClient["searchPoi"]>> = [];
+        context.toolResultCache.set(cacheKey, emptyResult);
+        return recordToolCall({
+          agentSessionId: context.sessionId,
+          name,
+          request,
+          signal: context.signal,
+          run: async () => emptyResult,
+        });
+      }
+
+      budget.directPoiSearches += 1;
+    }
+
+    return recordCachedToolCall({
+      context,
       name,
       request,
-      signal: context.signal,
       run: () => amap.searchPoi(request),
     });
   }
@@ -1584,15 +1707,16 @@ async function executeToolCall(
     const requestedLimit = readOptionalNumber(args, "limit") ?? 12;
     const limit = Math.min(12, Math.max(3, requestedLimit));
 
-    return recordToolCall({
-      agentSessionId: context.sessionId,
-      name,
-      request: {
+    const request = {
         city,
         limit,
         keywordGroups: NATURAL_ATTRACTION_SEARCH_GROUPS,
-      },
-      signal: context.signal,
+      };
+
+    return recordCachedToolCall({
+      context,
+      name,
+      request,
       run: async () => {
         const batches = [];
         for (const keywords of NATURAL_ATTRACTION_SEARCH_GROUPS) {
@@ -1618,11 +1742,10 @@ async function executeToolCall(
 
   if (name === "get_poi_detail") {
     const request = { id: readString(args, "id") };
-    return recordToolCall({
-      agentSessionId: context.sessionId,
+    return recordCachedToolCall({
+      context,
       name,
       request,
-      signal: context.signal,
       run: () => amap.getPoiDetail(request),
     });
   }
@@ -1665,11 +1788,10 @@ async function executeToolCall(
           ? amap.getWalkingRoute(resolvedRequest)
           : amap.getBicyclingRoute(resolvedRequest);
 
-    return recordToolCall({
-      agentSessionId: context.sessionId,
+    return recordCachedToolCall({
+      context,
       name,
       request,
-      signal: context.signal,
       run: async () => {
         if (!request.origin) {
           throw new Error(ORIGIN_REQUIRED_MESSAGE);
@@ -1943,6 +2065,11 @@ async function runConversationAttempt(input: {
       completion = await input.chatClient.complete({
         messages: input.messages,
         tools: TOOL_DEFINITIONS,
+        purpose: input.context.purpose,
+        maxOutputTokens:
+          input.context.purpose === "travel"
+            ? TRAVEL_MAX_OUTPUT_TOKENS
+            : undefined,
         model:
           input.context.purpose === "travel"
             ? TRAVEL_PLANNING_MODEL
@@ -2337,6 +2464,11 @@ async function runContinuationAttempt(
     purpose: session.purpose === "travel" ? "travel" : "planning",
     tripId: session.tripId,
     signal,
+    toolResultCache: new Map(),
+    travelEvidenceBudget: createTravelEvidenceBudget(
+      session.purpose === "travel" ? "travel" : "planning",
+      session.prompt
+    ),
   };
   const messages = await createContinuationMessages(session);
   const result = await runConversationAttempt({
@@ -2374,6 +2506,11 @@ export async function runPlanningAttempt(
     prompt: session.prompt,
     purpose: session.purpose === "travel" ? "travel" : "planning",
     signal,
+    toolResultCache: new Map(),
+    travelEvidenceBudget: createTravelEvidenceBudget(
+      session.purpose === "travel" ? "travel" : "planning",
+      session.prompt
+    ),
   };
   const messages = await createInitialMessages(session, attempt);
 

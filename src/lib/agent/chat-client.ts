@@ -42,6 +42,8 @@ export type AgentChatCompletionInput = {
   tools: AgentChatToolDefinition[];
   model?: string;
   toolChoice?: AgentChatToolChoice;
+  purpose?: "planning" | "travel";
+  maxOutputTokens?: number;
   signal?: AbortSignal;
 };
 
@@ -56,6 +58,7 @@ export type AgentChatClient = {
 type EnvSource = Partial<Record<string, string | undefined>>;
 
 const AGENT_MAX_OUTPUT_TOKENS = 32768;
+export const TRAVEL_MAX_OUTPUT_TOKENS = 16384;
 
 function parseToolArguments(value: string | null | undefined) {
   if (!value) return { arguments: {} };
@@ -125,6 +128,8 @@ export function createOpenAiChatClient(
     async complete(input) {
       const model =
         input.model?.trim() || env.OPENAI_MODEL?.trim() || DEFAULT_PLANNING_MODEL;
+      const maxOutputTokens = input.maxOutputTokens ?? AGENT_MAX_OUTPUT_TOKENS;
+      const startedAt = Date.now();
       const completion = await client.chat.completions.create(
         {
           model,
@@ -138,7 +143,7 @@ export function createOpenAiChatClient(
             },
           })),
           tool_choice: input.toolChoice ?? "auto",
-          max_tokens: AGENT_MAX_OUTPUT_TOKENS,
+          max_tokens: maxOutputTokens,
         },
         { signal: input.signal }
       );
@@ -148,6 +153,19 @@ export function createOpenAiChatClient(
       if (!message) {
         throw new Error("OpenAI 未返回规划消息。");
       }
+
+      console.info(
+        "[agent-model-call]",
+        JSON.stringify({
+          model,
+          purpose: input.purpose ?? "planning",
+          inputChars: JSON.stringify(input.messages).length,
+          toolCount: input.tools.length,
+          outputChars: JSON.stringify(message).length,
+          maxOutputTokens,
+          durationMs: Date.now() - startedAt,
+        })
+      );
 
       return {
         message: {

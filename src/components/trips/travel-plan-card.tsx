@@ -18,6 +18,7 @@ import type {
   TravelAttraction,
   TravelPlan,
   TravelRecommendationEvidence,
+  TravelRouteStats,
   TravelTransportMode,
 } from "@/lib/trips/travel-plan";
 
@@ -164,7 +165,13 @@ function AttractionList({
   );
 }
 
-export function TravelPlanCard({ plan }: { plan: TravelPlan }) {
+export function TravelPlanCard({
+  plan,
+  routeStats,
+}: {
+  plan: TravelPlan;
+  routeStats?: TravelRouteStats;
+}) {
   return (
     <div className="space-y-5">
       <GlassCard className="p-5">
@@ -179,6 +186,27 @@ export function TravelPlanCard({ plan }: { plan: TravelPlan }) {
               {plan.days ? ` · ${plan.days} 天` : ""}
             </h2>
             <p className="mt-2 text-sm leading-6 text-[#434655]">{plan.summary}</p>
+            {routeStats ? (
+              <div className="mt-4 rounded-2xl border border-[#93c5fd]/60 bg-[#eff6ff] px-4 py-3 text-xs leading-5 text-[#1e40af]">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-bold">结构化路线事实</span>
+                  <span className="font-semibold">以已落盘路线明细为准</span>
+                </div>
+                <p className="mt-1 font-semibold">
+                  自驾 {routeStats.totalDrivingMinutes} 分钟 · 路程 {routeStats.totalRouteMinutes} 分钟 · 缓冲 {routeStats.totalBufferMinutes} 分钟 · 合计 {routeStats.totalMinutes} 分钟
+                </p>
+                {routeStats.dailyDrivingMinutes.length > 0 ? (
+                  <p className="mt-1">
+                    每日自驾：{routeStats.dailyDrivingMinutes
+                      .map((item) => `${item.date} ${item.minutes} 分钟`)
+                      .join(" · ")}
+                  </p>
+                ) : null}
+                <p className="mt-1 text-[11px]">
+                  上方 AI 摘要只作行程说明，不覆盖结构化路线分钟数。
+                </p>
+              </div>
+            ) : null}
           </div>
           <div className="flex shrink-0 items-start gap-2 rounded-2xl bg-[#fff4d6] px-3 py-2 text-[#7a4f00]">
             <CloudSun aria-hidden="true" className="mt-0.5 size-5" />

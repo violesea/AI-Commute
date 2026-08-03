@@ -138,10 +138,108 @@ export type TravelPlan = {
   pitfalls: TravelPitfall[];
 };
 
+export type TravelRouteStatLeg = {
+  order: number;
+  routeMinutes: number;
+  bufferMinutes: number;
+  totalMinutes?: number | null;
+  mode?: string | null;
+  latestDepartAt?: Date | string | null;
+  targetArriveAt?: Date | string | null;
+};
+
+export type TravelDailyDrivingStat = {
+  date: string;
+  minutes: number;
+  legOrders: number[];
+};
+
+export type TravelRouteStats = {
+  totalRouteMinutes: number;
+  totalBufferMinutes: number;
+  totalMinutes: number;
+  totalDrivingMinutes: number;
+  dailyDrivingMinutes: TravelDailyDrivingStat[];
+};
+
 export type TravelWeatherDateRange = {
   startDate: string;
   endDate: string;
 };
+
+const DRIVING_MODE_PATTERN = /driving|drive|car|auto|驾车|自驾/i;
+
+function isDrivingMode(mode?: string | null) {
+  return Boolean(mode && DRIVING_MODE_PATTERN.test(mode));
+}
+
+function dateKeyInTimeZone(
+  value: Date | string | null | undefined,
+  timeZone: string
+) {
+  if (!value) return undefined;
+
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return undefined;
+
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: timeZone || "Asia/Shanghai",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(date);
+  } catch {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Shanghai",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(date);
+  }
+}
+
+export function getTravelRouteStats(
+  legs: readonly TravelRouteStatLeg[],
+  timeZone = "Asia/Shanghai"
+): TravelRouteStats {
+  const orderedLegs = [...legs].sort((left, right) => left.order - right.order);
+  const daily = new Map<string, TravelDailyDrivingStat>();
+  let totalRouteMinutes = 0;
+  let totalBufferMinutes = 0;
+  let totalDrivingMinutes = 0;
+
+  for (const leg of orderedLegs) {
+    const routeMinutes = Math.max(0, Math.round(leg.routeMinutes));
+    const bufferMinutes = Math.max(0, Math.round(leg.bufferMinutes));
+    totalRouteMinutes += routeMinutes;
+    totalBufferMinutes += bufferMinutes;
+
+    if (!isDrivingMode(leg.mode)) continue;
+
+    totalDrivingMinutes += routeMinutes;
+    const date = dateKeyInTimeZone(
+      leg.latestDepartAt ?? leg.targetArriveAt,
+      timeZone
+    );
+    if (!date) continue;
+
+    const current = daily.get(date) ?? { date, minutes: 0, legOrders: [] };
+    current.minutes += routeMinutes;
+    current.legOrders.push(leg.order);
+    daily.set(date, current);
+  }
+
+  return {
+    totalRouteMinutes,
+    totalBufferMinutes,
+    totalMinutes: totalRouteMinutes + totalBufferMinutes,
+    totalDrivingMinutes,
+    dailyDrivingMinutes: [...daily.values()].sort((left, right) =>
+      left.date.localeCompare(right.date)
+    ),
+  };
+}
 
 function readRecord(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {

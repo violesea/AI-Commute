@@ -540,10 +540,23 @@ describe("sample-aligned UI components", () => {
             },
           ],
         }}
+        routeStats={{
+          totalRouteMinutes: 1195,
+          totalBufferMinutes: 76,
+          totalMinutes: 1271,
+          totalDrivingMinutes: 1195,
+          dailyDrivingMinutes: [
+            { date: "2026-08-08", minutes: 262, legOrders: [1, 2] },
+            { date: "2026-08-09", minutes: 209, legOrders: [3] },
+          ],
+        }}
       />
     );
 
     expect(html).toContain("旅行规划");
+    expect(html).toContain("结构化路线事实");
+    expect(html).toContain("自驾 1195 分钟");
+    expect(html).toContain("每日自驾：2026-08-08 262 分钟 · 2026-08-09 209 分钟");
     expect(html).toContain("天气参考");
     expect(html).toContain("当前可用预报：截至 2026-08-06");
     expect(html).toContain("自驾天气动态监控已开启");

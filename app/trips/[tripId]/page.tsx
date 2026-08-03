@@ -32,7 +32,10 @@ import {
 } from "@/lib/trips/monitoring";
 import { buildMapPath } from "@/lib/trips/map-path";
 import { toPublicTripShareData } from "@/lib/trips/share-view";
-import { parseTravelPlanJson } from "@/lib/trips/travel-plan";
+import {
+  getTravelRouteStats,
+  parseTravelPlanJson,
+} from "@/lib/trips/travel-plan";
 
 type TripPageProps = {
   params: Promise<{
@@ -136,23 +139,32 @@ export default async function TripDetailPage({
 
   const tripTimeZone = trip.timezone;
   const primaryLeg = trip.legs[0];
-  const selectedCandidates = trip.legs.flatMap((leg) => {
+  const isTravelTrip = trip.agentSessions[0]?.purpose === "travel";
+  const selectedRouteLegs = trip.legs.flatMap((leg) => {
     const candidate =
       leg.selectedCandidate ??
       leg.routeCandidates.find((routeCandidate) => routeCandidate.selected) ??
       leg.routeCandidates[0];
 
-    return candidate ? [candidate] : [];
+    return candidate
+      ? [
+          {
+            order: leg.order,
+            title: candidate.title,
+            routeMinutes: candidate.routeMinutes,
+            bufferMinutes: candidate.bufferMinutes,
+            totalMinutes: candidate.totalMinutes,
+            mode: candidate.mode,
+            latestDepartAt: leg.latestDepartAt,
+            targetArriveAt: leg.targetArriveAt,
+          },
+        ]
+      : [];
   });
-  const totalRouteMinutes = selectedCandidates.reduce(
-    (sum, candidate) => sum + candidate.routeMinutes,
-    0
-  );
-  const totalBufferMinutes = selectedCandidates.reduce(
-    (sum, candidate) => sum + candidate.bufferMinutes,
-    0
-  );
-  const isTravelTrip = trip.agentSessions[0]?.purpose === "travel";
+  const routeStats = getTravelRouteStats(selectedRouteLegs, tripTimeZone);
+  const selectedCandidates = selectedRouteLegs;
+  const totalRouteMinutes = routeStats.totalRouteMinutes;
+  const totalBufferMinutes = routeStats.totalBufferMinutes;
   const routeGroups = trip.legs.map((leg) => ({
     id: leg.id,
     title: `${leg.originName} 到 ${leg.destinationName}`,
@@ -266,7 +278,12 @@ export default async function TripDetailPage({
           </div>
         </header>
 
-        {travelPlan ? <TravelPlanCard plan={travelPlan} /> : null}
+        {travelPlan ? (
+          <TravelPlanCard
+            plan={travelPlan}
+            routeStats={isTravelTrip ? routeStats : undefined}
+          />
+        ) : null}
 
         <GlassCard className="p-5">
           <div className="grid min-w-0 gap-5 md:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">

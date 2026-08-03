@@ -973,6 +973,68 @@ describe("agent planning sessions", () => {
     ).toHaveLength(2);
   });
 
+  it("reuses equivalent POI evidence within one planning session", async () => {
+    const user = await createUserWithSettings("agent-poi-cache");
+    const session = await startPlanningSession({
+      userId: user.id,
+      prompt: "Plan a route to the office.",
+    });
+    const baseAmapClient = createMockAmapClient();
+    const searchPoi = vi.fn(baseAmapClient.searchPoi);
+    const cachedAmapClient: AmapClient = {
+      ...baseAmapClient,
+      searchPoi,
+    };
+    let completeCalls = 0;
+    const chatClient: AgentChatClient = {
+      async complete({ messages }) {
+        completeCalls += 1;
+        const toolResultCount = messages.filter(
+          (message) => message.role === "tool"
+        ).length;
+
+        if (toolResultCount < 2) {
+          return {
+            message: {
+              role: "assistant",
+              content: "Reuse the same POI evidence.",
+              toolCalls: [
+                {
+                  id: `call-poi-cache-${completeCalls}`,
+                  name: "search_poi",
+                  arguments: { keywords: "办公室", city: "宁波" },
+                },
+              ],
+            },
+          };
+        }
+
+        return createTripToolResponse({
+          finalStopName: "办公室",
+          destinationLngLat: "121.5,29.8",
+          routeMinutes: 20,
+          mode: "walking",
+        });
+      },
+    };
+
+    const result = await runPlanningSession(session.id, {
+      amapClient: cachedAmapClient,
+      chatClient,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(searchPoi).toHaveBeenCalledTimes(1);
+    expect(completeCalls).toBe(3);
+    const persisted = await prisma.agentSession.findUniqueOrThrow({
+      where: { id: session.id },
+      include: { toolCalls: true },
+    });
+    expect(
+      persisted.toolCalls.filter((toolCall) => toolCall.name === "search_poi")
+    ).toHaveLength(2);
+  });
+
   it("fails route tools clearly when a place name has no valid POI coordinate", async () => {
     const user = await createUserWithSettings("agent-route-name-not-found");
     const session = await startPlanningSession({
