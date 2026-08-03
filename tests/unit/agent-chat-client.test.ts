@@ -235,4 +235,50 @@ describe("createOpenAiChatClient", () => {
     );
     completionMock.mockReset();
   });
+
+  it("repairs common malformed JSON from a structured travel tool call", async () => {
+    completionMock.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            content: "",
+            tool_calls: [
+              {
+                id: "repair-create-trip",
+                type: "function",
+                function: {
+                  name: "create_trip",
+                  arguments:
+                    '{"title":"北京到锡林郭勒","notes":"雨天\n减速",}',
+                },
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    const client = createOpenAiChatClient({
+      OPENAI_API_KEY: "test-key",
+      OPENAI_BASE_URL: "https://api.deepseek.com/v1",
+    });
+
+    const result = await client.complete({
+      messages: [{ role: "user", content: "规划旅行" }],
+      tools: [],
+      model: "deepseek-v4-flash",
+      purpose: "travel",
+    });
+
+    expect(result.message.toolCalls?.[0]).toMatchObject({
+      name: "create_trip",
+      arguments: {
+        title: "北京到锡林郭勒",
+        notes: "雨天\n减速",
+      },
+      parseRepaired: true,
+    });
+    expect(result.message.toolCalls?.[0]?.parseError).toBeUndefined();
+    completionMock.mockReset();
+  });
 });

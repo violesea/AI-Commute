@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { jsonrepair } from "jsonrepair";
 import type { TravelPlan } from "@/lib/trips/travel-plan";
 import {
   DEFAULT_PLANNING_MODEL,
@@ -14,6 +15,7 @@ export type AgentChatToolCall = {
   name: string;
   arguments: Record<string, unknown>;
   parseError?: string;
+  parseRepaired?: boolean;
 };
 
 export type AgentChatMessage = {
@@ -77,10 +79,23 @@ function parseToolArguments(value: string | null | undefined) {
           parseError: "模型返回的工具参数不是 JSON 对象。",
         };
   } catch {
-    return {
-      arguments: {},
-      parseError: "模型返回的工具参数不是合法 JSON。",
-    };
+    try {
+      const repaired = JSON.parse(jsonrepair(value)) as unknown;
+      return repaired && typeof repaired === "object" && !Array.isArray(repaired)
+        ? {
+            arguments: repaired as Record<string, unknown>,
+            parseRepaired: true,
+          }
+        : {
+            arguments: {},
+            parseError: "模型返回的工具参数不是 JSON 对象。",
+          };
+    } catch {
+      return {
+        arguments: {},
+        parseError: "模型返回的工具参数不是合法 JSON。",
+      };
+    }
   }
 }
 
