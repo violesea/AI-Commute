@@ -40,6 +40,30 @@ const travelPlan = {
         drivingAdvice: "服务区等待强降雨",
         action: "必要时延后湖边活动",
       },
+      {
+        legOrder: 2,
+        route: "正蓝旗到上都湖",
+        summary: "草原风力变化",
+        risk: "medium",
+        drivingAdvice: "出发前刷新风力和能见度",
+        action: "大风时缩短湖边停留",
+      },
+      {
+        legOrder: 3,
+        route: "上都湖到锡林浩特",
+        summary: "傍晚降温",
+        risk: "low",
+        drivingAdvice: "按白天时段完成转场",
+        action: "若能见度下降则提前结束户外活动",
+      },
+      {
+        legOrder: 4,
+        route: "锡林浩特到北京",
+        summary: "返程天气可能变化",
+        risk: "medium",
+        drivingAdvice: "返程前重新确认降雨和道路情况",
+        action: "恶劣天气时拆分返程或延后出发",
+      },
     ],
   },
   transport: {
@@ -83,6 +107,8 @@ const travelPlan = {
   ],
   pitfalls: [
     { title: "天气待核实", detail: "出发前刷新。", severity: "high" },
+    { title: "景区预约", detail: "热门景点先查官方公告。", severity: "medium" },
+    { title: "草原道路与停车", detail: "提前确认道路、停车和补给点。", severity: "medium" },
   ],
 };
 
@@ -578,5 +604,149 @@ describe("travel planning integration", () => {
     expect(result.tripId).toBeTruthy();
     expect(callCount).toBe(2);
     expect(rejectedToolMessage).toContain("创建行程至少需要一个目的地停靠点");
+  });
+
+  it("persists failed create_trip validation and stops repeated identical errors", async () => {
+    const user = await prisma.user.create({
+      data: {
+        email: `travel-failed-tool-audit-${Date.now()}@example.com`,
+        name: "旅行失败审计用户",
+        passwordHash: "hash",
+        settings: {
+          create: {
+            defaultCity: "北京",
+            timezone: "Asia/Shanghai",
+            originName: "北京",
+            originLngLat: "116.4,39.9",
+            routePreference: "balanced",
+          },
+        },
+      },
+    });
+    const session = await startPlanningSession({
+      userId: user.id,
+      purpose: "travel",
+      prompt: "请规划2026年8月8日至11日北京出发、锡林郭勒盟自驾4天3晚的旅行。",
+    });
+    let callCount = 0;
+    const chatClient: AgentChatClient = {
+      async complete() {
+        callCount += 1;
+        return {
+          message: {
+            role: "assistant",
+            content: "创建旅行行程。",
+            toolCalls: [
+              {
+                id: `repeated-invalid-create-${callCount}`,
+                name: "create_trip",
+                arguments: {
+                  title: "无效旅行行程",
+                  timezone: "Asia/Shanghai",
+                  stops: [
+                    { order: 0, name: "北京", kind: "origin" },
+                    { order: 1, name: "锡林郭勒", kind: "destination" },
+                  ],
+                  legs: [
+                    {
+                      order: 0,
+                      originName: "北京",
+                      destinationName: "锡林郭勒",
+                      routeMinutes: 120,
+                      totalMinutes: 120,
+                      bufferComponents: [],
+                      mode: "driving",
+                    },
+                  ],
+                  travelPlan: {
+                    ...travelPlan,
+                    weather: {
+                      ...travelPlan.weather,
+                      dynamicMonitoring: false,
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        };
+      },
+    };
+
+    const result = await runPlanningSession(session.id, {
+      amapClient: createMockAmapClient(),
+      chatClient,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(callCount).toBe(2);
+    const persisted = await prisma.agentSession.findUniqueOrThrow({
+      where: { id: session.id },
+      include: { toolCalls: { orderBy: { createdAt: "asc" } } },
+    });
+    const failedCreates = persisted.toolCalls.filter(
+      (toolCall) => toolCall.name === "create_trip"
+    );
+    expect(failedCreates).toHaveLength(2);
+    expect(failedCreates.every((toolCall) => toolCall.status === "failed")).toBe(
+      true
+    );
+    expect(failedCreates[0]?.error).toContain("动态天气监控");
+  });
+
+  it("stops an agent that keeps calling tools without completing", async () => {
+    const user = await prisma.user.create({
+      data: {
+        email: `travel-round-limit-${Date.now()}@example.com`,
+        name: "旅行轮数上限用户",
+        passwordHash: "hash",
+        settings: {
+          create: {
+            defaultCity: "北京",
+            timezone: "Asia/Shanghai",
+            originName: "北京",
+            originLngLat: "116.4,39.9",
+            routePreference: "balanced",
+          },
+        },
+      },
+    });
+    const session = await startPlanningSession({
+      userId: user.id,
+      purpose: "travel",
+      prompt: "请规划北京到锡林郭勒的旅行。",
+    });
+    let callCount = 0;
+    const chatClient: AgentChatClient = {
+      async complete() {
+        callCount += 1;
+        return {
+          message: {
+            role: "assistant",
+            content: "继续读取设置。",
+            toolCalls: [
+              {
+                id: `round-limit-settings-${callCount}`,
+                name: "read_settings",
+                arguments: {},
+              },
+            ],
+          },
+        };
+      },
+    };
+
+    const result = await runPlanningSession(session.id, {
+      amapClient: createMockAmapClient(),
+      chatClient,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(callCount).toBe(14);
+    const failure = await prisma.agentMessage.findFirstOrThrow({
+      where: { agentSessionId: session.id, role: "assistant", content: { startsWith: "规划失败" } },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(failure.content).toContain("超过 14 轮");
   });
 });

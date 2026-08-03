@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assertTravelPlanAttractionCoverage,
+  assertTravelPlanOperationalCompleteness,
   ensureTravelPlanWeatherCoverage,
   normalizeTravelPlan,
   parseTravelPlanJson,
@@ -193,6 +194,70 @@ describe("travel plan normalization", () => {
         ),
       })
     ).toThrow("至少需要 3 个自然景观");
+
+    expect(() =>
+      assertTravelPlanAttractionCoverage({
+        ...plan,
+        attractions: [
+          { name: "湖泊一", category: "natural", reason: "湖泊风光" },
+          { name: "湖泊二", category: "natural", reason: "湖边自然风光" },
+          { name: "湖泊三", category: "natural", reason: "湖畔日落" },
+          { name: "天一阁", category: "cultural", reason: "历史人文" },
+        ],
+      })
+    ).toThrow("不同类型");
+  });
+
+  it("requires operational weather, route, lodging, food, and pitfall evidence", () => {
+    const validPlan = normalizeTravelPlan({
+      ...sampleTravelPlan,
+      weather: {
+        ...sampleTravelPlan.weather,
+        routeRisks: [
+          ...sampleTravelPlan.weather.routeRisks,
+          {
+            legOrder: 2,
+            route: "景点一到景点二",
+            summary: "天气稳定",
+            risk: "low",
+            drivingAdvice: "出发前复查",
+            action: "大风时调整户外安排",
+          },
+        ],
+      },
+      transport: {
+        ...sampleTravelPlan.transport,
+        transit: {
+          ...sampleTravelPlan.transport.transit,
+          route: "地铁与接驳",
+        },
+      },
+      pitfalls: [
+        ...sampleTravelPlan.pitfalls,
+        { title: "停车", detail: "提前确认停车位", severity: "medium" },
+        { title: "路况", detail: "出发前检查道路", severity: "medium" },
+      ],
+    });
+
+    expect(() =>
+      assertTravelPlanOperationalCompleteness(validPlan, {
+        drivingLegOrders: [1, 2],
+      })
+    ).not.toThrow();
+    expect(() =>
+      assertTravelPlanOperationalCompleteness(
+        normalizeTravelPlan({
+          ...validPlan,
+          weather: { ...validPlan.weather, dynamicMonitoring: undefined },
+        }),
+        { drivingLegOrders: [1, 2] }
+      )
+    ).toThrow("动态天气监控");
+    expect(() =>
+      assertTravelPlanOperationalCompleteness(validPlan, {
+        drivingLegOrders: [1, 2, 3],
+      })
+    ).toThrow("每个自驾路段");
   });
 
   it("fills missing weather entries for every itinerary date", () => {

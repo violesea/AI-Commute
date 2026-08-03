@@ -526,9 +526,10 @@ describe("settings API", () => {
     ["routePreference", {}]
   ])("returns 400 when %s is supplied as an invalid value", async (field, value) => {
     const { PUT } = await import("@app/api/settings/route");
+    const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const user = await prisma.user.create({
       data: {
-        email: `settings-invalid-supplied-${field}-${Date.now()}@example.com`,
+        email: `settings-invalid-supplied-${field}-${uniqueSuffix}@example.com`,
         name: "无效字段用户",
         passwordHash: "hash"
       },

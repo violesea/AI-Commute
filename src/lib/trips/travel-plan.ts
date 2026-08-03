@@ -76,6 +76,7 @@ export type TravelAttraction = {
   name: string;
   category: TravelAttractionCategory;
   reason: string;
+  naturalType?: string;
   address?: string;
   lngLat?: string;
   day?: number;
@@ -364,6 +365,12 @@ function normalizeAttraction(value: unknown): TravelAttraction {
     name: readText(record, "name", "travelPlan.attractions[]")!,
     category: normalizedCategory,
     reason: readText(record, "reason", "travelPlan.attractions[]")!,
+    naturalType: readText(
+      record,
+      "naturalType",
+      "travelPlan.attractions[]",
+      false
+    ),
     address: readText(record, "address", "travelPlan.attractions[]", false),
     lngLat: readText(record, "lngLat", "travelPlan.attractions[]", false),
     day: readOptionalNumber(record, "day"),
@@ -521,7 +528,7 @@ export function normalizeTravelPlan(value: unknown): TravelPlan {
         false
       ),
       dynamicMonitoring:
-        readOptionalBoolean(weather, "dynamicMonitoring") ?? true,
+        readOptionalBoolean(weather, "dynamicMonitoring"),
       refreshPolicy: readText(
         weather,
         "refreshPolicy",
@@ -637,6 +644,37 @@ export function requiredNaturalAttractionCount(days?: number) {
   return days && days >= 4 ? 4 : 3;
 }
 
+const NATURAL_TYPE_PATTERNS = [
+  ["wetland", /湿地|沼泽|芦苇/],
+  ["lake", /湖|湖泊|水库/],
+  ["volcanic", /火山|熔岩|地质/],
+  ["grassland", /草原|草甸|牧场/],
+  ["forest", /森林|林场|原始林/],
+  ["coast", /海|海岸|海滨|海岛|海滩|滨海|湾/],
+  ["canyon", /峡谷|沟|峪|河谷/],
+  ["waterfall", /瀑布|飞瀑/],
+  ["mountain", /山|峰|岭|山口/],
+  ["park", /公园|植物园|风景区|景区/],
+  ["viewpoint", /观景台|观景|台地|草原天路/],
+] as const;
+
+function naturalAttractionType(attraction: TravelAttraction) {
+  const text = [
+    attraction.naturalType,
+    attraction.name,
+    attraction.reason,
+    attraction.notes,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return (
+    NATURAL_TYPE_PATTERNS.find(([, pattern]) => pattern.test(text))?.[0] ??
+    "other"
+  );
+}
+
 export function assertTravelPlanAttractionCoverage(plan: TravelPlan) {
   const naturalCount = plan.attractions.filter(
     (attraction) => attraction.category === "natural"
@@ -654,6 +692,87 @@ export function assertTravelPlanAttractionCoverage(plan: TravelPlan) {
 
   if (culturalCount < 1) {
     throw new Error("旅行规划至少需要 1 个人文景点候选。");
+  }
+
+  const naturalTypes = new Set(
+    plan.attractions
+      .filter((attraction) => attraction.category === "natural")
+      .map(naturalAttractionType)
+  );
+  const requiredNaturalTypeCount = naturalCount >= 4 ? 3 : 2;
+  if (naturalTypes.size < requiredNaturalTypeCount) {
+    throw new Error(
+      `旅行规划的自然景观至少需要覆盖 ${requiredNaturalTypeCount} 种不同类型（例如湖泊、山地、森林、湿地或草原），当前只有 ${naturalTypes.size} 种。请扩大自然景观搜索范围后重试。`
+    );
+  }
+}
+
+export function assertTravelPlanOperationalCompleteness(
+  plan: TravelPlan,
+  options: { drivingLegOrders?: number[] } = {}
+) {
+  if (plan.weather.dynamicMonitoring !== true) {
+    throw new Error(
+      "旅行规划必须明确开启动态天气监控（weather.dynamicMonitoring=true）。"
+    );
+  }
+
+  if (!plan.weather.refreshPolicy?.trim()) {
+    throw new Error(
+      "旅行规划必须提供天气刷新策略（weather.refreshPolicy），说明出发前和路线复查时如何更新天气。"
+    );
+  }
+
+  const drivingLegOrders = options.drivingLegOrders ?? [];
+  const routeRisks = plan.weather.routeRisks ?? [];
+  if (routeRisks.length === 0) {
+    throw new Error(
+      "旅行规划必须为自驾路段提供 weather.routeRisks，并写明驾驶建议和具体动作。"
+    );
+  }
+
+  if (drivingLegOrders.length > 0) {
+    const riskOrders = new Set(
+      routeRisks
+        .map((risk) => risk.legOrder)
+        .filter((order): order is number => order !== undefined)
+    );
+    if (
+      routeRisks.length < drivingLegOrders.length ||
+      riskOrders.size < drivingLegOrders.length ||
+      drivingLegOrders.some((order) => !riskOrders.has(order))
+    ) {
+      throw new Error(
+        `旅行规划必须为每个自驾路段提供天气风险（当前 ${routeRisks.length} 条，要求覆盖 ${drivingLegOrders.length} 个路段）。`
+      );
+    }
+  }
+
+  for (const [label, option] of [
+    ["自驾", plan.transport.driving],
+    ["公共交通", plan.transport.transit],
+  ] as const) {
+    if (!option.durationMinutes || option.durationMinutes <= 0) {
+      throw new Error(`旅行规划必须提供${label}方案的有效预计时长。`);
+    }
+
+    if (!option.route?.trim()) {
+      throw new Error(`旅行规划必须提供${label}方案的路线依据。`);
+    }
+  }
+
+  if (plan.lodging.length === 0) {
+    throw new Error("旅行规划至少需要 1 条住宿建议。");
+  }
+
+  if (plan.food.length === 0) {
+    throw new Error("旅行规划至少需要 1 条美食建议。");
+  }
+
+  if (plan.pitfalls.length < 3) {
+    throw new Error(
+      `旅行规划至少需要 3 条具体避坑建议，当前只有 ${plan.pitfalls.length} 条。`
+    );
   }
 }
 
