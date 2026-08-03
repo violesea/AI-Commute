@@ -1,9 +1,12 @@
 ---
-skills_used: []
+skills_used:
+  - github:github
+  - browser:control-in-app-browser
 model_used: GPT-5
 model_source: visible_runtime
 created_at: 2026-08-03T00:00:00+08:00
-updated_at: 2026-08-03T16:28:46+08:00
+updated_at: 2026-08-03T17:57:07+08:00
+updated_by: codex
 ---
 
 # Issues
@@ -42,10 +45,12 @@ updated_at: 2026-08-03T16:28:46+08:00
 
 验证：模型测试 API 5/5、设置页 UI 75/75；线上设置页已实测显示模型选择、旅行固定模型说明和接入测试，`deepseek-v4-flash` 实际连通约 1.07 秒；页面未显示 API Key 或 Base URL。
 
-## ISSUE-006 · quality · P1 · open
+## ISSUE-006 · quality · P1 · done
 
 旅行模型在用户要求长途驾驶安排在白天时，仍可能安排较长的日内夜间返程。
 
 证据：真实行程 D3 的“达里湖景区（北岸）→锡林浩特住宿”安排为 18:30-21:00，路线风险也标记为“夜间路段”；该段约 150km，模型已自行提示疲劳、牲畜和夜路风险，但没有自动拆分住宿或给出明确的白天替代方案。
 
 验收：当用户要求白天驾驶时，系统对日落后仍在途的较长自驾段给出可执行的提前返程、途中住宿或缩短景点方案；详情页不把高风险夜间返程呈现为默认的“节奏适中”。
+
+验证：2026-08-03 在最新部署 `fbe33de` 上重新规划北京→锡林郭勒 4 天自驾行程，会话 `cmsd1dpy00003pf0s0h472wvw` 终态为 `completed`，行程 `cmsd1nhna001mpf0simhzs0wl` 进入 `monitoring`。系统将原先可能导致夜间返程的安排拆成 10 段，详情页显示 D1 07:00 出发、D4 06:30 返程；独立用 `suncalc` 复算，10/10 段自驾均早于当地日落前 30 分钟安全线到达。

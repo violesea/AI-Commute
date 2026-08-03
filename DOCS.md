@@ -1,9 +1,12 @@
 ---
-skills_used: []
+skills_used:
+  - github:github
+  - browser:control-in-app-browser
 model_used: GPT-5
 model_source: visible_runtime
 created_at: 2026-08-03T00:00:00+08:00
-updated_at: 2026-08-03T16:28:46+08:00
+updated_at: 2026-08-03T17:57:07+08:00
+updated_by: codex
 ---
 
 # Engineering Notes
@@ -40,3 +43,12 @@ updated_at: 2026-08-03T16:28:46+08:00
 - 由于高德在 2026-08-03 的预报窗口只覆盖 08-03 至 08-06，四个旅行日均按未知处理，并要求出发前刷新；这条状态已通过继续对话和数据库读取再次核验。
 - 发现的问题：D3 达里湖返回锡林浩特安排到 21:00，详情页已展示夜路风险；见 `ISSUES.md` 的 ISSUE-006。
 - 模型配置：设置页可见通勤模型选择和旅行固定 `deepseek-v4-flash` 说明；`/api/settings/test-model` 实测连通约 1.07 秒，页面未泄露凭据。
+
+## 2026-08-03 第二次线上回归
+
+- 环境：`http://192.168.1.56:3002/`，部署提交 `fbe33de`。
+- 旅行会话：`cmsd1dpy00003pf0s0h472wvw`；行程：`cmsd1nhna001mpf0simhzs0wl`；会话终态为 `completed`，行程状态为 `monitoring`。
+- 真实结果：5 个自然景点、2 个人文景点、3 个住宿、4 个美食、预算、避坑、自驾/公共交通对比，天气覆盖 2026-08-08 至 2026-08-11 四天，`weather_refresh` 任务 2 个。
+- 当前预报只覆盖到 08-06，08-08 至 08-11 均按未知处理；详情页同时展示基线天气、路线风险、出发前 72/24 小时刷新和每段出发前复查要求。
+- 时间轴：10 段路线均在请求日期范围内且无跨午夜；D1 07:00 出发、D4 06:30 返程。独立 `suncalc` 复算显示 10/10 段自驾均早于当地日落前 30 分钟安全线。
+- 模型配置：线上 `/settings` 实测可展开通勤模型选项（GPT-4o mini、DeepSeek V4 Flash、DeepSeek V4 Pro），页面明确显示旅行固定使用 `deepseek-v4-flash`；接入测试按钮和 API 配置状态可见，页面未显示 API Key 或 Base URL。

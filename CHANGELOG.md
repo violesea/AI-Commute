@@ -1,9 +1,12 @@
 ---
-skills_used: []
+skills_used:
+  - github:github
+  - browser:control-in-app-browser
 model_used: GPT-5
 model_source: visible_runtime
 created_at: 2026-08-03T00:00:00+08:00
-updated_at: 2026-08-03T16:28:46+08:00
+updated_at: 2026-08-03T17:57:07+08:00
+updated_by: codex
 ---
 
 # Changelog
@@ -19,3 +22,4 @@ updated_at: 2026-08-03T16:28:46+08:00
 - 将高德真实客户端请求节流降为 1 QPS，降低低配额 Key 触发 `CUQPS_HAS_EXCEEDED_THE_LIMIT` 的概率。
 - 为旅行天气计划增加服务端日期覆盖兜底；日期范围内缺失的天气日自动写入“未知、出发前刷新”，并在新建、路线替换和天气更新路径生效。
 - 完成线上北京-锡林郭勒真实回归：5 个自然景点、1 个人文景点、自驾/公共交通、住宿、美食、预算、避坑、动态天气和 2 个天气刷新任务均已落盘；D3 夜间返程质量问题登记为 ISSUE-006。
+- 完成第二次线上北京-锡林郭勒真实回归：5 个自然景点、2 个人文景点、3 个住宿、4 个美食、预算、避坑、动态天气和 2 个天气刷新任务均已落盘；10/10 段自驾通过日落前 30 分钟安全线，ISSUE-006 关闭。
