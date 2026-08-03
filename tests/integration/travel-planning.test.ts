@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import {
   runPlanningSession,
   startPlanningSession,
+  stringifyToolResult,
 } from "@/lib/agent/planner";
 import type { AgentChatClient } from "@/lib/agent/chat-client";
 import { createMockAmapClient } from "@/lib/amap/mock";
@@ -88,6 +89,24 @@ const travelPlan = {
 describe("travel planning integration", () => {
   beforeAll(async () => {
     await ensureTestDatabase();
+  });
+
+  it("keeps provider route payloads out of the model context", () => {
+    const serialized = stringifyToolResult({
+      mode: "driving",
+      durationMinutes: 458,
+      summary: "驾车路线来自高德",
+      raw: {
+        route: {
+          paths: [{ polyline: "116.4,39.9;".repeat(100_000) }],
+        },
+      },
+    });
+
+    expect(serialized).toContain('"durationMinutes":458');
+    expect(serialized).toContain("驾车路线来自高德");
+    expect(serialized).not.toContain("polyline");
+    expect(Buffer.byteLength(serialized)).toBeLessThan(1_000);
   });
 
   it("normalizes invalid model times and persists pre-departure weather jobs", async () => {

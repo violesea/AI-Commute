@@ -1551,10 +1551,14 @@ async function executeToolCall(
   }
 }
 
-function stringifyToolResult(result: unknown) {
+export function stringifyToolResult(result: unknown) {
   return JSON.stringify(result, (_key, value: unknown) => {
     if (value instanceof Date) {
       return value.toISOString();
+    }
+
+    if (_key === "raw") {
+      return undefined;
     }
 
     return value;
