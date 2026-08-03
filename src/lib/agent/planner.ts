@@ -62,6 +62,7 @@ import {
 } from "@/lib/trips/travel-plan";
 import {
   addTravelSchedulePitfall,
+  alignTravelPlanPitfallsWithSchedule,
   assertTravelItinerarySchedule,
   ensureTravelPlanRouteRiskCoverage,
   isTravelDayMarker,
@@ -1577,12 +1578,17 @@ async function normalizeCreateTripInput(
       : travelPlan;
   const normalizedTravelPlan =
     context.purpose === "travel" && travelPlan
-      ? addTravelSchedulePitfall(
-          ensureTravelPlanWeatherCoverage(
-            travelPlanWithEvidence!,
-            schedule.dateRange
+      ? alignTravelPlanPitfallsWithSchedule(
+          addTravelSchedulePitfall(
+            ensureTravelPlanWeatherCoverage(
+              travelPlanWithEvidence!,
+              schedule.dateRange
+            ),
+            schedule.legs,
+            timezone
           ),
           schedule.legs,
+          context.prompt,
           timezone
         )
       : travelPlanWithEvidence;
@@ -1789,12 +1795,17 @@ async function normalizeReplaceRouteInput(
       : travelPlan;
   const normalizedTravelPlan =
     context.purpose === "travel" && travelPlan
-      ? addTravelSchedulePitfall(
-          ensureTravelPlanWeatherCoverage(
-            travelPlanWithEvidence!,
-            schedule.dateRange
+      ? alignTravelPlanPitfallsWithSchedule(
+          addTravelSchedulePitfall(
+            ensureTravelPlanWeatherCoverage(
+              travelPlanWithEvidence!,
+              schedule.dateRange
+            ),
+            schedule.legs,
+            current.trip.timezone
           ),
           schedule.legs,
+          context.prompt,
           current.trip.timezone
         )
       : travelPlanWithEvidence;
@@ -2067,6 +2078,12 @@ async function executeToolCall(
         travelPlan,
         current.stops,
         current.legs
+      );
+      travelPlan = alignTravelPlanPitfallsWithSchedule(
+        travelPlan,
+        current.legs,
+        context.prompt,
+        current.trip.timezone
       );
     }
 

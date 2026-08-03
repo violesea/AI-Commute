@@ -880,17 +880,131 @@ function isPlannedAttraction(
   );
 }
 
+function isExactRouteStopMatch(
+  attraction: TravelAttraction,
+  stops: readonly TravelPlanRouteStop[]
+) {
+  const attractionName = normalizePlaceName(attraction.name);
+
+  return stops.some((stop) => {
+    if (isGenericRouteStop(stop)) return false;
+
+    return (
+      (Boolean(attractionName) && attractionName === normalizePlaceName(stop.name)) ||
+      sameLngLat(attraction.lngLat, stop.lngLat)
+    );
+  });
+}
+
+function isMuseumAttraction(attraction: TravelAttraction) {
+  return /博物馆/.test(
+    [attraction.name, attraction.address, attraction.reason]
+      .filter(Boolean)
+      .join(" ")
+  );
+}
+
+function sameAttractionIdentity(
+  left: TravelAttraction,
+  right: TravelAttraction
+) {
+  if (sameLngLat(left.lngLat, right.lngLat)) {
+    return true;
+  }
+
+  // A broad substring match is useful for provider aliases, but do not
+  // collapse a park and a museum merely because one name contains the other.
+  if (isMuseumAttraction(left) !== isMuseumAttraction(right)) {
+    return false;
+  }
+
+  return samePlace(left.name, right.name);
+}
+
+function mergeDuplicateAttractions(
+  existing: TravelAttraction,
+  incoming: TravelAttraction,
+  stops: readonly TravelPlanRouteStop[]
+) {
+  const existingIsExactRouteStop = isExactRouteStopMatch(existing, stops);
+  const incomingIsExactRouteStop = isExactRouteStopMatch(incoming, stops);
+  let preferred = existing;
+
+  if (incomingIsExactRouteStop && !existingIsExactRouteStop) {
+    preferred = incoming;
+  } else if (
+    !incomingIsExactRouteStop &&
+    existingIsExactRouteStop
+  ) {
+    preferred = existing;
+  } else if (
+    incoming.routeStatus === "planned" &&
+    existing.routeStatus !== "planned"
+  ) {
+    preferred = incoming;
+  }
+
+  const fallback = preferred === existing ? incoming : existing;
+
+  return {
+    ...fallback,
+    ...preferred,
+    routeStatus:
+      existing.routeStatus === "planned" || incoming.routeStatus === "planned"
+        ? ("planned" as const)
+        : ("alternative" as const),
+    address: preferred.address ?? fallback.address,
+    lngLat: preferred.lngLat ?? fallback.lngLat,
+    naturalType: preferred.naturalType ?? fallback.naturalType,
+    day: preferred.day ?? fallback.day,
+    stayMinutes: preferred.stayMinutes ?? fallback.stayMinutes,
+    bestTime: preferred.bestTime ?? fallback.bestTime,
+    weatherNote: preferred.weatherNote ?? fallback.weatherNote,
+    notes: preferred.notes ?? fallback.notes,
+    evidence: preferred.evidence ?? fallback.evidence,
+  } satisfies TravelAttraction;
+}
+
+function deduplicateAttractions(
+  attractions: TravelAttraction[],
+  stops: readonly TravelPlanRouteStop[]
+) {
+  const deduplicated: TravelAttraction[] = [];
+
+  for (const attraction of attractions) {
+    const duplicateIndex = deduplicated.findIndex((existing) =>
+      sameAttractionIdentity(existing, attraction)
+    );
+
+    if (duplicateIndex < 0) {
+      deduplicated.push(attraction);
+      continue;
+    }
+
+    deduplicated[duplicateIndex] = mergeDuplicateAttractions(
+      deduplicated[duplicateIndex],
+      attraction,
+      stops
+    );
+  }
+
+  return deduplicated;
+}
+
 export function alignTravelPlanAttractionsWithRoute(
   plan: TravelPlan,
   stops: readonly TravelPlanRouteStop[],
   legs: readonly TravelPlanRouteLeg[]
 ): TravelPlan {
-  const attractions = plan.attractions.map((attraction) => ({
-    ...attraction,
-    routeStatus: isPlannedAttraction(attraction, stops, legs)
-      ? ("planned" as const)
-      : ("alternative" as const),
-  }));
+  const attractions = deduplicateAttractions(
+    plan.attractions.map((attraction) => ({
+      ...attraction,
+      routeStatus: isPlannedAttraction(attraction, stops, legs)
+        ? ("planned" as const)
+        : ("alternative" as const),
+    })),
+    stops
+  );
 
   return {
     ...plan,

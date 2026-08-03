@@ -68,4 +68,39 @@ describe("TravelPlanCard route coverage", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/本次路线已安排 1 个景点，备选/)).toBeInTheDocument();
   });
+
+  it("labels itinerary weather relative to the trip and separates baseline weather", () => {
+    render(
+      <TravelPlanCard
+        plan={{
+          ...plan,
+          weather: {
+            ...plan.weather,
+            forecast: [
+              {
+                date: "2026-08-08",
+                day: 5,
+                summary: "行程日天气未知",
+                risk: "medium",
+              },
+              {
+                date: "2026-08-04",
+                day: 1,
+                summary: "基线天气",
+                risk: "low",
+              },
+            ],
+          },
+        }}
+        itineraryDateRange={{
+          startDate: "2026-08-08",
+          endDate: "2026-08-12",
+        }}
+      />
+    );
+
+    expect(screen.getByText("第 1 天 · 2026-08-08")).toBeInTheDocument();
+    expect(screen.getByText("参考天气 · 2026-08-04")).toBeInTheDocument();
+    expect(screen.queryByText("第 5 天 · 2026-08-08")).not.toBeInTheDocument();
+  });
 });

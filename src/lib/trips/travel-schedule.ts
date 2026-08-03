@@ -880,6 +880,29 @@ export type DailyDrivingLimitViolation = {
   limitMinutes: number;
 };
 
+export function getTravelDailyDrivingMinutes(
+  legs: readonly PlannedTripLegInput[],
+  timezone: string
+) {
+  const dailyDriving = new Map<string, number>();
+
+  for (const leg of legs) {
+    if (!isDrivingLeg(leg) || !leg.latestDepartAt) continue;
+
+    const date = formatInTimeZone(
+      leg.latestDepartAt,
+      timezone || DEFAULT_TIME_ZONE,
+      "yyyy-MM-dd"
+    );
+    dailyDriving.set(
+      date,
+      (dailyDriving.get(date) ?? 0) + Math.max(0, Math.round(leg.routeMinutes))
+    );
+  }
+
+  return dailyDriving;
+}
+
 export function findDailyDrivingLimitViolation(input: {
   prompt: string;
   timezone: string;
@@ -888,20 +911,7 @@ export function findDailyDrivingLimitViolation(input: {
   const limitMinutes = parseDailyDrivingLimitMinutes(input.prompt);
   if (!limitMinutes) return undefined;
 
-  const dailyDriving = new Map<string, number>();
-  for (const leg of input.legs) {
-    if (!isDrivingLeg(leg) || !leg.latestDepartAt) continue;
-
-    const date = formatInTimeZone(
-      leg.latestDepartAt,
-      input.timezone || DEFAULT_TIME_ZONE,
-      "yyyy-MM-dd"
-    );
-    dailyDriving.set(
-      date,
-      (dailyDriving.get(date) ?? 0) + Math.max(0, Math.round(leg.routeMinutes))
-    );
-  }
+  const dailyDriving = getTravelDailyDrivingMinutes(input.legs, input.timezone);
 
   const violation = [...dailyDriving.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
@@ -1098,20 +1108,7 @@ export function addTravelSchedulePitfall(
   legs: PlannedTripLegInput[],
   timezone: string
 ): TravelPlan {
-  const dailyDriving = new Map<string, number>();
-
-  for (const leg of legs) {
-    if (!isDrivingLeg(leg) || !leg.latestDepartAt) continue;
-    const date = formatInTimeZone(
-      leg.latestDepartAt,
-      timezone || DEFAULT_TIME_ZONE,
-      "yyyy-MM-dd"
-    );
-    dailyDriving.set(
-      date,
-      (dailyDriving.get(date) ?? 0) + Math.max(0, Math.round(leg.routeMinutes))
-    );
-  }
+  const dailyDriving = getTravelDailyDrivingMinutes(legs, timezone);
 
   const longest = [...dailyDriving.entries()].sort(
     (left, right) => right[1] - left[1]
@@ -1135,6 +1132,60 @@ export function addTravelSchedulePitfall(
         )} 小时，超过 8 小时舒适阈值。建议改为分段返程或增加一晚；若必须执行，06:30 前出发、每 2 小时休息，并在出发前确认驾驶人状态。`,
         severity: "high",
       },
+    ],
+  };
+}
+
+const DAILY_DRIVING_PITFALL_PATTERN =
+  /(?:每日|每天|单日|日均)[^。！？\n]{0,80}(?:自驾|驾车|驾驶|开车|行车)|(?:自驾|驾车|驾驶|开车|行车)[^。！？\n]{0,80}(?:每日|每天|单日|日均)/i;
+
+function isDailyDrivingPitfall(pitfall: TravelPlan["pitfalls"][number]) {
+  return DAILY_DRIVING_PITFALL_PATTERN.test(
+    `${pitfall.title} ${pitfall.detail}`
+  );
+}
+
+function formatDrivingMinutes(minutes: number) {
+  return `${minutes} 分钟（约 ${(minutes / 60).toFixed(1)} 小时）`;
+}
+
+/**
+ * Replace model-written daily-limit warnings with one statement generated
+ * from the same dated leg totals used by the hard validation.
+ */
+export function alignTravelPlanPitfallsWithSchedule(
+  plan: TravelPlan,
+  legs: readonly PlannedTripLegInput[],
+  prompt: string,
+  timezone: string
+): TravelPlan {
+  const limitMinutes = parseDailyDrivingLimitMinutes(prompt);
+  if (!limitMinutes) return plan;
+
+  const dailyDriving = getTravelDailyDrivingMinutes(legs, timezone);
+  if (dailyDriving.size === 0) return plan;
+
+  const dailySummary = [...dailyDriving.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([date, minutes]) => `${date} ${formatDrivingMinutes(minutes)}`)
+    .join("；");
+  const hasViolation = [...dailyDriving.values()].some(
+    (minutes) => minutes > limitMinutes
+  );
+  const limitLabel = formatDrivingMinutes(limitMinutes);
+  const detail = hasViolation
+    ? `按结构化路线核对，每日自驾为：${dailySummary}；用户上限为 ${limitLabel}。当前路线不应落盘，需拆分日期、增加住宿或删减远端景点。`
+    : `按结构化路线核对，每日自驾为：${dailySummary}；用户上限为 ${limitLabel}，当前没有超过上限。不同日期的路段不能相加；出发前仍需刷新天气和路况，必要时缩短户外安排或增加休息。`;
+
+  return {
+    ...plan,
+    pitfalls: [
+      {
+        title: "每日自驾上限（结构化核对）",
+        detail,
+        severity: hasViolation ? ("high" as const) : ("medium" as const),
+      },
+      ...plan.pitfalls.filter((pitfall) => !isDailyDrivingPitfall(pitfall)),
     ],
   };
 }

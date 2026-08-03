@@ -3,6 +3,7 @@ import { formatInTimeZone } from "date-fns-tz";
 import {
   assertTravelItineraryRouteContinuity,
   assertTravelItinerarySchedule,
+  alignTravelPlanPitfallsWithSchedule,
   findDailyDrivingLimitViolation,
   isTravelDayMarker,
   normalizeTravelItinerarySchedule,
@@ -11,6 +12,7 @@ import {
   parseDailyDrivingLimitMinutes,
   parseTravelDateRange,
 } from "@/lib/trips/travel-schedule";
+import type { TravelPlan } from "@/lib/trips/travel-plan";
 
 function localTime(date: Date | undefined) {
   return date
@@ -292,6 +294,67 @@ describe("travel itinerary schedule", () => {
         legs,
       })
     ).toBeUndefined();
+  });
+
+  it("rewrites daily-limit pitfalls from the canonical dated leg totals", () => {
+    const plan = {
+      pitfalls: [
+        {
+          title: "每日驾驶限6小时的拆分",
+          detail: "D1 北京到锡林浩特累计 480 分钟，已经超过上限。",
+          severity: "high",
+        },
+        {
+          title: "天气刷新",
+          detail: "出发前重新确认天气。",
+          severity: "medium",
+        },
+      ],
+    } as unknown as TravelPlan;
+    const aligned = alignTravelPlanPitfallsWithSchedule(
+      plan,
+      [
+        {
+          order: 0,
+          routeMinutes: 252,
+          mode: "driving",
+          latestDepartAt: new Date("2026-08-08T00:00:00.000Z"),
+        },
+        {
+          order: 1,
+          routeMinutes: 60,
+          mode: "driving",
+          latestDepartAt: new Date("2026-08-08T04:00:00.000Z"),
+        },
+        {
+          order: 2,
+          routeMinutes: 30,
+          mode: "driving",
+          latestDepartAt: new Date("2026-08-08T07:00:00.000Z"),
+        },
+        {
+          order: 3,
+          routeMinutes: 168,
+          mode: "driving",
+          latestDepartAt: new Date("2026-08-09T00:00:00.000Z"),
+        },
+      ],
+      "请规划2026-08-08至2026-08-12北京出发的旅行，每日自驾不超过6小时。",
+      "Asia/Shanghai"
+    );
+
+    expect(aligned.pitfalls[0]).toMatchObject({
+      title: "每日自驾上限（结构化核对）",
+      severity: "medium",
+    });
+    expect(aligned.pitfalls[0]?.detail).toContain(
+      "2026-08-08 342 分钟（约 5.7 小时）"
+    );
+    expect(aligned.pitfalls[0]?.detail).toContain(
+      "2026-08-09 168 分钟（约 2.8 小时）"
+    );
+    expect(aligned.pitfalls[0]?.detail).not.toContain("480 分钟");
+    expect(aligned.pitfalls).toHaveLength(2);
   });
 
   it("rebases model times into a chronological daytime itinerary", () => {

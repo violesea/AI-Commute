@@ -163,6 +163,59 @@ describe("travel plan normalization", () => {
     });
   });
 
+  it("merges provider aliases for the same planned attraction", () => {
+    const plan = normalizeTravelPlan({
+      ...sampleTravelPlan,
+      attractions: [
+        {
+          name: "火山地质公园博物馆",
+          category: "cultural",
+          reason: "火山地质展陈",
+          address: "S27锡张高速附近",
+        },
+        {
+          name: "锡林郭勒草原火山地质公园博物馆",
+          category: "cultural",
+          reason: "展示草原火山成因",
+          address: "S27锡张高速附近",
+        },
+      ],
+    });
+    const aligned = alignTravelPlanAttractionsWithRoute(
+      plan,
+      [
+        { order: 0, name: "锡林浩特", kind: "origin" },
+        {
+          order: 1,
+          name: "锡林郭勒草原火山地质公园博物馆",
+          kind: "destination",
+          address: "S27锡张高速附近",
+        },
+      ],
+      [
+        {
+          order: 0,
+          originName: "锡林浩特",
+          destinationName: "锡林郭勒草原火山地质公园博物馆",
+          routeMinutes: 35,
+          mode: "driving",
+        },
+      ]
+    );
+
+    expect(
+      aligned.attractions.filter((attraction) => /博物馆/.test(attraction.name))
+    ).toHaveLength(1);
+    expect(aligned.attractions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "锡林郭勒草原火山地质公园博物馆",
+          routeStatus: "planned",
+        }),
+      ])
+    );
+  });
+
   it("normalizes persisted route coverage without treating it as route evidence", () => {
     const normalized = normalizeTravelPlan({
       ...sampleTravelPlan,

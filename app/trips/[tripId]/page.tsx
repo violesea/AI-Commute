@@ -32,7 +32,11 @@ import {
 } from "@/lib/trips/monitoring";
 import { buildMapPath } from "@/lib/trips/map-path";
 import { toPublicTripShareData } from "@/lib/trips/share-view";
-import { normalizeScheduledText } from "@/lib/trips/travel-schedule";
+import {
+  alignTravelPlanPitfallsWithSchedule,
+  normalizeScheduledText,
+  parseTravelDateRange,
+} from "@/lib/trips/travel-schedule";
 import {
   alignTravelPlanAttractionsWithRoute,
   getTravelRouteStats,
@@ -80,6 +84,48 @@ function formatRecalculationStatus(status?: string | null) {
   };
 
   return status ? labels[status] ?? status : "未知";
+}
+
+function dateKeyInTimeZone(
+  value: Date | null | undefined,
+  timeZone: string
+) {
+  if (!value) return undefined;
+
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function inferItineraryDateRange(
+  rawPrompt: string,
+  legs: readonly {
+    latestDepartAt: Date | null;
+    targetArriveAt: Date | null;
+  }[],
+  timeZone: string
+) {
+  const parsed = parseTravelDateRange(rawPrompt);
+  if (parsed) {
+    return { startDate: parsed.startDate, endDate: parsed.endDate };
+  }
+
+  const dates = legs
+    .flatMap((leg) => [leg.latestDepartAt, leg.targetArriveAt])
+    .map((value) => dateKeyInTimeZone(value, timeZone))
+    .filter((value): value is string => Boolean(value))
+    .sort();
+
+  if (dates.length === 0) return undefined;
+
+  return { startDate: dates[0], endDate: dates[dates.length - 1] };
 }
 
 export default async function TripDetailPage({
@@ -234,6 +280,9 @@ export default async function TripDetailPage({
     now,
   });
   const agentSessionId = trip.agentSessions[0]?.id ?? trip.agentSessionId;
+  const itineraryDateRange = isTravelTrip
+    ? inferItineraryDateRange(trip.rawPrompt, trip.legs, tripTimeZone)
+    : undefined;
   const routeTitle =
     selectedCandidates.length > 1
       ? `已选择 ${selectedCandidates.length} 段路线`
@@ -241,9 +290,34 @@ export default async function TripDetailPage({
   const mapPath = buildMapPath(primaryLeg?.originName, trip.stops);
   const publicTrip = toPublicTripShareData(trip);
   const parsedTravelPlan = parseTravelPlanJson(trip.travelPlanJson);
-  const travelPlan = parsedTravelPlan
-    ? alignTravelPlanAttractionsWithRoute(
+  const travelPlanLegs = trip.legs.map((leg) => {
+    const candidate =
+      leg.selectedCandidate ??
+      leg.routeCandidates.find((routeCandidate) => routeCandidate.selected) ??
+      leg.routeCandidates[0];
+    return {
+      order: leg.order,
+      originName: leg.originName ?? undefined,
+      originLngLat: leg.originLngLat ?? undefined,
+      destinationName: leg.destinationName ?? undefined,
+      destinationLngLat: leg.destinationLngLat ?? undefined,
+      routeMinutes: candidate?.routeMinutes ?? 0,
+      mode: candidate?.mode,
+      latestDepartAt: leg.latestDepartAt ?? undefined,
+      targetArriveAt: leg.targetArriveAt ?? undefined,
+    };
+  });
+  const displayTravelPlan = parsedTravelPlan
+    ? alignTravelPlanPitfallsWithSchedule(
         parsedTravelPlan,
+        travelPlanLegs,
+        trip.rawPrompt,
+        tripTimeZone
+      )
+    : null;
+  const travelPlan = displayTravelPlan
+    ? alignTravelPlanAttractionsWithRoute(
+        displayTravelPlan,
         trip.stops.map((stop) => ({
           order: stop.order,
           name: stop.name,
@@ -252,21 +326,7 @@ export default async function TripDetailPage({
           kind: stop.kind,
           notes: stop.notes,
         })),
-        trip.legs.map((leg) => {
-          const candidate =
-            leg.selectedCandidate ??
-            leg.routeCandidates.find((routeCandidate) => routeCandidate.selected) ??
-            leg.routeCandidates[0];
-          return {
-            order: leg.order,
-            originName: leg.originName,
-            originLngLat: leg.originLngLat,
-            destinationName: leg.destinationName,
-            destinationLngLat: leg.destinationLngLat,
-            routeMinutes: candidate?.routeMinutes,
-            mode: candidate?.mode,
-          };
-        })
+        travelPlanLegs
       )
     : null;
 
@@ -312,6 +372,7 @@ export default async function TripDetailPage({
           <TravelPlanCard
             plan={travelPlan}
             routeStats={isTravelTrip ? routeStats : undefined}
+            itineraryDateRange={itineraryDateRange}
           />
         ) : null}
 

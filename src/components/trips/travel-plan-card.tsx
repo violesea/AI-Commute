@@ -20,6 +20,7 @@ import type {
   TravelRecommendationEvidence,
   TravelRouteStats,
   TravelTransportMode,
+  TravelWeatherDateRange,
 } from "@/lib/trips/travel-plan";
 
 function transportLabel(mode: TravelTransportMode) {
@@ -63,6 +64,33 @@ function formatWeatherCoverage(plan: TravelPlan) {
   }
 
   return "未记录当前预报边界，按每次刷新结果执行";
+}
+
+function calendarDayDifference(startDate: string, endDate: string) {
+  const [startYear, startMonth, startDay] = startDate.split("-").map(Number);
+  const [endYear, endMonth, endDay] = endDate.split("-").map(Number);
+  const start = Date.UTC(startYear, startMonth - 1, startDay);
+  const end = Date.UTC(endYear, endMonth - 1, endDay);
+  return Math.round((end - start) / 86_400_000);
+}
+
+function formatForecastDay(
+  date: string | undefined,
+  modelDay: number | undefined,
+  itineraryDateRange?: TravelWeatherDateRange
+) {
+  if (date && itineraryDateRange) {
+    if (
+      date >= itineraryDateRange.startDate &&
+      date <= itineraryDateRange.endDate
+    ) {
+      return `第 ${calendarDayDifference(itineraryDateRange.startDate, date) + 1} 天`;
+    }
+
+    return "参考天气";
+  }
+
+  return modelDay ? `第 ${modelDay} 天` : "行程天气";
 }
 
 function recommendationEvidenceLabel(
@@ -179,9 +207,11 @@ function AttractionList({
 export function TravelPlanCard({
   plan,
   routeStats,
+  itineraryDateRange,
 }: {
   plan: TravelPlan;
   routeStats?: TravelRouteStats;
+  itineraryDateRange?: TravelWeatherDateRange;
 }) {
   return (
     <div className="space-y-5">
@@ -284,7 +314,11 @@ export function TravelPlanCard({
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <p className="text-xs font-bold text-[#191c1e]">
-                        {forecast.day ? `第 ${forecast.day} 天` : "行程天气"}
+                        {formatForecastDay(
+                          forecast.date,
+                          forecast.day,
+                          itineraryDateRange
+                        )}
                         {forecast.date ? ` · ${forecast.date}` : ""}
                       </p>
                       {forecast.location ? (
