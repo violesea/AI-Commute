@@ -6,9 +6,17 @@ skills_used:
 model_used: GPT-5
 model_source: visible_runtime
 created_at: 2026-08-03T00:00:00+08:00
-updated_at: 2026-08-04T05:24:39+08:00
+updated_at: 2026-08-04T05:52:00+08:00
 updated_by: codex
 ---
+
+## 2026-08-04 路线事实一致性补丁（待线上复测）
+
+- 根因：无年份日期输入（如“8月8日至12日”）无法进入日期范围校验；同时旅行创建路径把 stop ID 按数组位置绑定，却保留模型文本中的非相邻起终点。
+- 修复：按北京时间当前年份解析中文/数字无年份日期；结构化旅行行程要求每个相邻 stop 只有一段 leg，端点不一致时返回带修正方向的工具错误；旅行创建与替换统一从 canonical stop 生成起终点字段。
+- 保持边界：普通通勤仍允许“外部出发点→单一目的地”的显式路线；历史已落盘行程不被自动改写。
+- 本地证据：`tests/unit/travel-schedule.test.ts`、`tests/integration/create-trip.test.ts`、`tests/integration/travel-planning.test.ts` 定向通过，`npm run lint` 通过。
+- 待办：推送 `violesea/AI-Commute` 后重建 `.56:3002`，用无年份北京→锡林郭勒请求验证超 6 小时返程会被拒绝并重试为连续路线。
 
 # Engineering Notes
 

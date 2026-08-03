@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { formatInTimeZone } from "date-fns-tz";
 import {
+  assertTravelItineraryRouteContinuity,
   assertTravelItinerarySchedule,
   findDailyDrivingLimitViolation,
   isTravelDayMarker,
@@ -57,6 +58,32 @@ describe("travel itinerary schedule", () => {
     });
   });
 
+  it("resolves yearless Chinese date ranges against the reference year", () => {
+    expect(
+      parseTravelDateRange(
+        "请规划8月8日至12日北京出发的锡林郭勒自驾旅行",
+        new Date("2026-08-04T00:00:00.000Z")
+      )
+    ).toEqual({
+      startDate: "2026-08-08",
+      endDate: "2026-08-12",
+      days: 5,
+    });
+  });
+
+  it("resolves yearless numeric date ranges", () => {
+    expect(
+      parseTravelDateRange(
+        "请规划8/8-8/12北京出发的锡林郭勒自驾旅行",
+        new Date("2026-08-04T00:00:00.000Z")
+      )
+    ).toEqual({
+      startDate: "2026-08-08",
+      endDate: "2026-08-12",
+      days: 5,
+    });
+  });
+
   it("interprets offset-less model timestamps in the trip timezone", () => {
     expect(
       parseDateTimeInTimeZone("2026-08-08T07:00:00", "Asia/Shanghai").toISOString()
@@ -96,6 +123,65 @@ describe("travel itinerary schedule", () => {
     expect(parseDailyDrivingLimitMinutes("请按每天自驾不超过 6 小时安排路线")).toBe(360);
     expect(parseDailyDrivingLimitMinutes("每日不超过 90 分钟自驾")).toBe(90);
     expect(parseDailyDrivingLimitMinutes("每天游览不超过 6 小时")).toBeUndefined();
+  });
+
+  it("rejects a travel leg whose endpoints skip an itinerary stop", () => {
+    expect(() =>
+      assertTravelItineraryRouteContinuity({
+        stops: [
+          { order: 0, name: "北京" },
+          { order: 1, name: "贝子庙" },
+          { order: 2, name: "达里诺尔湖" },
+        ],
+        legs: [
+          {
+            order: 0,
+            originName: "北京",
+            destinationName: "贝子庙",
+            routeMinutes: 60,
+          },
+          {
+            order: 1,
+            originName: "锡林浩特市区住宿",
+            destinationName: "达里诺尔湖",
+            routeMinutes: 120,
+          },
+        ],
+      })
+    ).toThrow(/与相邻停靠点 贝子庙 不一致/);
+  });
+
+  it("accepts a complete adjacent travel route", () => {
+    expect(() =>
+      assertTravelItineraryRouteContinuity({
+        stops: [
+          { order: 0, name: "北京" },
+          { order: 1, name: "正蓝旗" },
+          { order: 2, name: "锡林浩特" },
+          { order: 3, name: "北京" },
+        ],
+        legs: [
+          {
+            order: 0,
+            originName: "北京",
+            destinationName: "正蓝旗",
+            routeMinutes: 300,
+          },
+          {
+            order: 1,
+            originName: "正蓝旗",
+            destinationName: "锡林浩特",
+            routeMinutes: 240,
+          },
+          {
+            order: 2,
+            originName: "锡林浩特",
+            destinationName: "北京",
+            routeMinutes: 360,
+          },
+        ],
+      })
+    ).not.toThrow();
   });
 
   it("rejects the aggregate daily driving time above the user's ceiling", () => {
@@ -141,6 +227,31 @@ describe("travel itinerary schedule", () => {
         legs,
       })
     ).toThrow(/累计自驾约 6\.5 小时，超过用户指定的每日上限 6\.0 小时/);
+  });
+
+  it("enforces the daily ceiling when the user omits the year", () => {
+    const year = new Date().getFullYear();
+    expect(() =>
+      assertTravelItinerarySchedule({
+        prompt: "请规划8月8日至12日北京到锡林郭勒自驾旅行，每天不超过6小时驾驶。",
+        timezone: "Asia/Shanghai",
+        stops: [
+          { order: 0, name: "北京" },
+          { order: 1, name: "锡林浩特" },
+        ],
+        legs: [
+          {
+            order: 0,
+            originName: "北京",
+            destinationName: "锡林浩特",
+            routeMinutes: 418,
+            mode: "driving",
+            latestDepartAt: new Date(`${year}-08-12T00:30:00.000Z`),
+            targetArriveAt: new Date(`${year}-08-12T07:28:00.000Z`),
+          },
+        ],
+      })
+    ).toThrow(/累计自驾约 7\.0 小时，超过用户指定的每日上限 6\.0 小时/);
   });
 
   it("allows a day at or below the explicit self-drive ceiling", () => {

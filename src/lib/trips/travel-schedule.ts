@@ -135,7 +135,10 @@ function normalizeDateRange(
   return { startDate, endDate, days };
 }
 
-export function parseTravelDateRange(prompt: string): TravelDateRange | null {
+export function parseTravelDateRange(
+  prompt: string,
+  referenceDate = new Date()
+): TravelDateRange | null {
   const chineseRange = prompt.match(
     /(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?\s*(?:\s*(?:[（(][^）)]{0,16}[）)]|(?:周|星期)[一二三四五六日天])\s*)?(?:至|到|～|~|—|-)\s*(?:(\d{4})\s*年\s*)?(?:(\d{1,2})\s*月\s*)?(\d{1,2})\s*日?/
   );
@@ -157,17 +160,58 @@ export function parseTravelDateRange(prompt: string): TravelDateRange | null {
     /(\d{4})[-/](\d{1,2})[-/](\d{1,2})\s*(?:\s*(?:[（(][^）)]{0,16}[）)]|(?:周|星期)[A-Za-z一二三四五六日天]+)\s*)?(?:至|到|～|~|—|-)\s*(?:(\d{4})[-/])?(?:(\d{1,2})[-/])?(\d{1,2})/
   );
 
-  if (!isoRange) return null;
+  if (isoRange) {
+    const [, year, month, day, endYear, endMonth, endDay] = isoRange;
+    return normalizeDateRange(
+      { year: Number(year), month: Number(month), day: Number(day) },
+      {
+        year: Number(endYear ?? year),
+        month: Number(endMonth ?? month),
+        day: Number(endDay),
+      },
+      Boolean(endYear)
+    );
+  }
 
-  const [, year, month, day, endYear, endMonth, endDay] = isoRange;
+  // Users commonly omit the year for an upcoming trip, for example
+  // "8月8日至12日". Resolve that shorthand against the current calendar year
+  // so date-bound safety checks (daily driving, daylight, and reminders) still
+  // run instead of silently accepting an unbounded itinerary.
+  const chineseYearlessRange = prompt.match(
+    /(\d{1,2})\s*月\s*(\d{1,2})\s*日?\s*(?:至|到|～|~|—|-)\s*(?:(\d{1,2})\s*月\s*)?(\d{1,2})\s*日?/
+  );
+  const referenceYear = Number(
+    formatInTimeZone(referenceDate, DEFAULT_TIME_ZONE, "yyyy")
+  );
+
+  if (chineseYearlessRange) {
+    const [, month, day, endMonth, endDay] = chineseYearlessRange;
+    return normalizeDateRange(
+      { year: referenceYear, month: Number(month), day: Number(day) },
+      {
+        year: referenceYear,
+        month: Number(endMonth ?? month),
+        day: Number(endDay),
+      },
+      false
+    );
+  }
+
+  const numericYearlessRange = prompt.match(
+    /(\d{1,2})[\/]\s*(\d{1,2})\s*(?:至|到|～|~|—|-)\s*(?:(\d{1,2})[\/]\s*)?(\d{1,2})/
+  );
+
+  if (!numericYearlessRange) return null;
+
+  const [, month, day, endMonth, endDay] = numericYearlessRange;
   return normalizeDateRange(
-    { year: Number(year), month: Number(month), day: Number(day) },
+    { year: referenceYear, month: Number(month), day: Number(day) },
     {
-      year: Number(endYear ?? year),
+      year: referenceYear,
       month: Number(endMonth ?? month),
       day: Number(endDay),
     },
-    Boolean(endYear)
+    false
   );
 }
 
@@ -487,6 +531,74 @@ function findDestinationStopIndex(
   );
 }
 
+function orderedRouteItems<T extends { order?: number }>(items: T[]) {
+  return [...items].sort(
+    (left, right) =>
+      (left.order ?? items.indexOf(left)) -
+      (right.order ?? items.indexOf(right))
+  );
+}
+
+function endpointLabel(name?: string, lngLat?: string) {
+  return name?.trim() || lngLat?.trim() || "未提供";
+}
+
+/**
+ * A structured travel plan is rendered twice: once from ordered stops and
+ * once from ordered legs. Rejecting non-adjacent endpoints here prevents the
+ * map, route cards, driving totals, and weather risks from describing
+ * different itineraries.
+ *
+ * A single destination stop remains valid for a travel plan whose origin is an
+ * external place (for example, "从酒店去景区"). Multi-stop travel plans must
+ * have one leg for every adjacent stop pair.
+ */
+export function assertTravelItineraryRouteContinuity(input: {
+  stops?: PlannedTripStopInput[];
+  legs: PlannedTripLegInput[];
+}) {
+  const stops = orderedRouteItems(input.stops ?? []);
+  const legs = orderedRouteItems(input.legs);
+
+  if (stops.length <= 1 || legs.length === 0) return;
+
+  if (legs.length !== stops.length - 1) {
+    throw new Error(
+      `旅行路线的停靠点和路段数量不一致：${stops.length} 个停靠点需要 ${stops.length - 1} 段相邻路线，当前为 ${legs.length} 段。请补齐或删除对应 stops/legs，确保每一段都连接相邻停靠点。`
+    );
+  }
+
+  for (const [index, leg] of legs.entries()) {
+    const fromStop = stops[index];
+    const toStop = stops[index + 1];
+    const legOrder = leg.order ?? index;
+
+    if (
+      (leg.originName || leg.originLngLat) &&
+      !stopMatches(fromStop, leg.originName, leg.originLngLat)
+    ) {
+      throw new Error(
+        `旅行路线第 ${legOrder} 段起点 ${endpointLabel(
+          leg.originName,
+          leg.originLngLat
+        )} 与相邻停靠点 ${fromStop.name} 不一致。请把该段起点改为 ${fromStop.name}，或在 stops 中补入缺失的中途停靠点。`
+      );
+    }
+
+    if (
+      (leg.destinationName || leg.destinationLngLat) &&
+      !stopMatches(toStop, leg.destinationName, leg.destinationLngLat)
+    ) {
+      throw new Error(
+        `旅行路线第 ${legOrder} 段终点 ${endpointLabel(
+          leg.destinationName,
+          leg.destinationLngLat
+        )} 与相邻停靠点 ${toStop.name} 不一致。请把该段终点改为 ${toStop.name}，或在 stops 中补入缺失的中途停靠点。`
+      );
+    }
+  }
+}
+
 export function normalizeTravelItinerarySchedule(
   input: NormalizeTravelScheduleInput
 ): NormalizeTravelScheduleResult {
@@ -615,6 +727,11 @@ export function assertTravelItinerarySchedule(input: {
   stops?: PlannedTripStopInput[];
   legs: PlannedTripLegInput[];
 }) {
+  assertTravelItineraryRouteContinuity({
+    stops: input.stops,
+    legs: input.legs,
+  });
+
   const dateRange = parseTravelDateRange(input.prompt);
   if (!dateRange) return;
 

@@ -471,8 +471,9 @@ describe("travel planning integration", () => {
                   stops: [
                     { order: 0, name: "北京", kind: "origin" },
                     { order: 1, name: "正蓝旗", kind: "destination" },
-                    { order: 2, name: "锡林浩特", kind: "destination" },
-                    { order: 3, name: "北京", kind: "destination" },
+                    { order: 2, name: "上都湖", kind: "waypoint" },
+                    { order: 3, name: "锡林浩特", kind: "destination" },
+                    { order: 4, name: "北京", kind: "destination" },
                   ],
                   legs: [
                     {
@@ -746,8 +747,9 @@ describe("travel planning integration", () => {
                   stops: [
                     { order: 0, name: "北京", kind: "origin" },
                     { order: 1, name: "正蓝旗", kind: "destination" },
-                    { order: 2, name: "锡林浩特", kind: "destination" },
-                    { order: 3, name: "北京", kind: "destination" },
+                    { order: 2, name: "上都湖", kind: "waypoint" },
+                    { order: 3, name: "锡林浩特", kind: "destination" },
+                    { order: 4, name: "北京", kind: "destination" },
                   ],
                   legs: [
                     {

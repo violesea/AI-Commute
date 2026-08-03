@@ -340,6 +340,97 @@ describe("createPlannedTrip", () => {
     });
   });
 
+  it("binds structured travel legs to adjacent persisted stops", async () => {
+    const user = await prisma.user.create({
+      data: {
+        email: `trip-travel-continuity-${Date.now()}@example.com`,
+        name: "旅行路线连续性用户",
+        passwordHash: "hash",
+      },
+    });
+    const travelPlan: TravelPlan = {
+      destination: "锡林郭勒",
+      summary: "三站旅行路线",
+      weather: {
+        city: "锡林郭勒",
+        summary: "天气待刷新",
+        advice: "出发前刷新",
+      },
+      transport: {
+        recommended: "driving",
+        reason: "景点分散",
+        driving: { summary: "自驾", reason: "灵活", durationMinutes: 60 },
+        transit: { summary: "公共交通", reason: "换乘多", durationMinutes: 120 },
+      },
+      attractions: [],
+      lodging: [],
+      food: [],
+      pitfalls: [],
+    };
+
+    const trip = await createPlannedTrip({
+      userId: user.id,
+      rawPrompt: "规划2026年8月8日至10日的旅行",
+      timezone: "Asia/Shanghai",
+      title: "测试旅行",
+      stops: [
+        { order: 2, name: "锡林浩特", kind: "destination" },
+        { order: 0, name: "北京", kind: "origin" },
+        { order: 1, name: "正蓝旗", kind: "waypoint" },
+      ],
+      legs: [
+        {
+          order: 1,
+          originName: "正蓝旗",
+          destinationName: "锡林浩特",
+          routeMinutes: 240,
+          mode: "driving",
+          latestDepartAt: new Date("2026-08-09T00:00:00.000Z"),
+          targetArriveAt: new Date("2026-08-09T04:00:00.000Z"),
+        },
+        {
+          order: 0,
+          originName: "北京",
+          destinationName: "正蓝旗",
+          routeMinutes: 300,
+          mode: "driving",
+          latestDepartAt: new Date("2026-08-08T00:00:00.000Z"),
+          targetArriveAt: new Date("2026-08-08T05:00:00.000Z"),
+        },
+      ],
+      travelPlan,
+    });
+
+    const persisted = await prisma.trip.findUniqueOrThrow({
+      where: { id: trip.id },
+      include: {
+        stops: { orderBy: { order: "asc" } },
+        legs: { orderBy: { order: "asc" } },
+      },
+    });
+
+    expect(persisted.stops.map((stop) => stop.name)).toEqual([
+      "北京",
+      "正蓝旗",
+      "锡林浩特",
+    ]);
+    expect(
+      persisted.legs.map((leg) => [
+        leg.fromStopId
+          ? persisted.stops.find((stop) => stop.id === leg.fromStopId)?.name
+          : null,
+        leg.toStopId
+          ? persisted.stops.find((stop) => stop.id === leg.toStopId)?.name
+          : null,
+        leg.originName,
+        leg.destinationName,
+      ])
+    ).toEqual([
+      ["北京", "正蓝旗", "北京", "正蓝旗"],
+      ["正蓝旗", "锡林浩特", "正蓝旗", "锡林浩特"],
+    ]);
+  });
+
   it("normalizes created trip titles to origin-destination", async () => {
     const user = await prisma.user.create({
       data: {

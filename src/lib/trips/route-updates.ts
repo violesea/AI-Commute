@@ -151,11 +151,12 @@ function resolveLegStops(input: {
   legInput: PlannedTripLegInput;
   index: number;
   explicitLegEndpoints: boolean;
+  structuredTravelRoute: boolean;
 }) {
   const sequentialFrom = input.stops[input.index];
   const sequentialTo = input.stops[input.index + 1] ?? input.stops.at(-1);
 
-  if (!input.explicitLegEndpoints) {
+  if (input.structuredTravelRoute || !input.explicitLegEndpoints) {
     return {
       fromStop: sequentialFrom,
       toStop: sequentialTo,
@@ -308,6 +309,7 @@ export async function replaceTripRoute(input: ReplaceTripRouteInput) {
     }
 
     const explicitLegEndpoints = hasExplicitLegEndpoints(orderedLegs);
+    const structuredTravelRoute = Boolean(travelPlanForValidation);
     const travelPlanForReminders =
       input.travelPlan ?? parseTravelPlanJson(trip.travelPlanJson);
     for (const [index, legInput] of orderedLegs.entries()) {
@@ -317,6 +319,7 @@ export async function replaceTripRoute(input: ReplaceTripRouteInput) {
         legInput,
         index,
         explicitLegEndpoints,
+        structuredTravelRoute,
       });
       if (!toStop) {
         throw new Error(`Route leg ${order} is missing a destination stop.`);
@@ -341,10 +344,18 @@ export async function replaceTripRoute(input: ReplaceTripRouteInput) {
         routeMinutes + bufferMinutes,
         Math.round(legInput.totalMinutes ?? routeMinutes + bufferMinutes)
       );
-      const originName = legInput.originName ?? fromStop?.name ?? "";
-      const originLngLat = legInput.originLngLat ?? fromStop?.lngLat ?? "";
-      const destinationName = legInput.destinationName ?? toStop.name;
-      const destinationLngLat = legInput.destinationLngLat ?? toStop.lngLat;
+      const originName = structuredTravelRoute
+        ? fromStop?.name ?? legInput.originName ?? ""
+        : legInput.originName ?? fromStop?.name ?? "";
+      const originLngLat = structuredTravelRoute
+        ? fromStop?.lngLat ?? legInput.originLngLat ?? ""
+        : legInput.originLngLat ?? fromStop?.lngLat ?? "";
+      const destinationName = structuredTravelRoute
+        ? toStop.name
+        : legInput.destinationName ?? toStop.name;
+      const destinationLngLat = structuredTravelRoute
+        ? toStop.lngLat
+        : legInput.destinationLngLat ?? toStop.lngLat;
       const latestDepartAt = defaultLatestDepartAt(
         input.targetArriveAt ?? trip.targetArriveAt,
         legInput,
