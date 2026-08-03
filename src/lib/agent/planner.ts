@@ -2068,10 +2068,22 @@ export function stringifyToolResult(result: unknown) {
 
 function stringifyToolError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
-  const instruction =
-    message.includes("结构化 travelPlan") || message.includes("travelPlan.")
-      ? "旅行模式的 create_trip 必须在本次调用中包含完整 travelPlan 对象，且 transport 必须是包含 recommended、reason、driving、transit 的对象；同时提供 destination、weather、budget、attractions、lodging、food、pitfalls。不要只补一个字段，也不要只提交 stops 和 legs；请压缩文字后立即重新调用一次完整 create_trip。"
-    : "工具调用未执行成功。请根据错误修正参数后重新调用同一个工具，不要只返回文字。";
+  let instruction =
+    "工具调用未执行成功。请根据错误修正参数后重新调用同一个工具，不要只返回文字。";
+
+  if (message.includes("travelPlan.weather.summary")) {
+    instruction =
+      "保留上一版完整 travelPlan 的 destination、weather、transport、budget、attractions、lodging、food、pitfalls；只修正 weather.summary。weather.summary 必须是非空纯文本字符串，不能省略 weather 或 transport，不能把对象写成字符串。请立即重新调用完整 create_trip。";
+  } else if (message.includes("travelPlan.weather")) {
+    instruction =
+      "保留上一版完整 travelPlan；weather 必须是对象，包含 city、summary、advice、dynamicMonitoring、refreshPolicy、forecast、routeRisks。不要只提交 weather 或 stops/legs，压缩文字后立即重新调用完整 create_trip。";
+  } else if (message.includes("travelPlan.transport")) {
+    instruction =
+      "保留上一版完整 travelPlan；transport 必须是对象，包含 recommended、reason、driving、transit，且 driving/transit 各自包含 summary、reason、durationMinutes、route。不要只提交 transport 或 stops/legs，立即重新调用完整 create_trip。";
+  } else if (message.includes("结构化 travelPlan") || message.includes("travelPlan.")) {
+    instruction =
+      "旅行模式的 create_trip 必须在本次调用中包含完整 travelPlan 对象，同时提供 destination、weather、transport、budget、attractions、lodging、food、pitfalls。不要只补一个字段，也不要只提交 stops 和 legs；请压缩文字后立即重新调用一次完整 create_trip。";
+  }
 
   return JSON.stringify({
     error: message,

@@ -249,6 +249,21 @@ function readRecord(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function readJsonRecord(value: unknown, label: string): Record<string, unknown> {
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Fall through to the same structural error as non-object input.
+    }
+  }
+
+  return readRecord(value, label);
+}
+
 function readText(
   record: Record<string, unknown>,
   key: string,
@@ -592,8 +607,10 @@ function normalizePitfall(value: unknown): TravelPitfall {
 
 export function normalizeTravelPlan(value: unknown): TravelPlan {
   const record = readRecord(value, "travelPlan");
-  const weather = readRecord(record.weather, "travelPlan.weather");
-  const transport = readRecord(record.transport, "travelPlan.transport");
+  const destination = readText(record, "destination", "travelPlan")!;
+  const summary = readText(record, "summary", "travelPlan")!;
+  const weather = readJsonRecord(record.weather, "travelPlan.weather");
+  const transport = readJsonRecord(record.transport, "travelPlan.transport");
   const recommended = readText(
     transport,
     "recommended",
@@ -603,14 +620,29 @@ export function normalizeTravelPlan(value: unknown): TravelPlan {
     record.budget === undefined
       ? undefined
       : normalizeBudget(record.budget);
+  const forecast = readOptionalArray(
+    weather,
+    "forecast",
+    "travelPlan.weather"
+  ).map(normalizeWeatherForecast);
+  const weatherSummary =
+    readText(weather, "summary", "travelPlan.weather", false) ??
+    readText(weather, "advice", "travelPlan.weather", false) ??
+    forecast[0]?.summary;
+
+  if (!weatherSummary) {
+    throw new Error(
+      "travelPlan.weather.summary must be a non-empty string and weather.advice or weather.forecast must provide fallback text."
+    );
+  }
 
   return {
-    destination: readText(record, "destination", "travelPlan")!,
-    summary: readText(record, "summary", "travelPlan")!,
+    destination,
+    summary,
     days: readOptionalNumber(record, "days"),
     weather: {
       city: readText(weather, "city", "travelPlan.weather")!,
-      summary: readText(weather, "summary", "travelPlan.weather")!,
+      summary: weatherSummary,
       advice: readText(weather, "advice", "travelPlan.weather")!,
       source: readText(weather, "source", "travelPlan.weather", false),
       observedAt: readText(
@@ -633,11 +665,7 @@ export function normalizeTravelPlan(value: unknown): TravelPlan {
         "travelPlan.weather",
         false
       ),
-      forecast: readOptionalArray(
-        weather,
-        "forecast",
-        "travelPlan.weather"
-      ).map(normalizeWeatherForecast),
+      forecast,
       routeRisks: readOptionalArray(
         weather,
         "routeRisks",

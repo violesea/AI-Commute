@@ -227,6 +227,21 @@ describe("travel plan normalization", () => {
     });
   });
 
+  it("recovers stringified nested weather and transport objects", () => {
+    const normalized = normalizeTravelPlan({
+      ...sampleTravelPlan,
+      weather: JSON.stringify({
+        ...sampleTravelPlan.weather,
+        summary: "",
+        advice: "出发前刷新天气",
+      }),
+      transport: JSON.stringify(sampleTravelPlan.transport),
+    });
+
+    expect(normalized.weather.summary).toBe("出发前刷新天气");
+    expect(normalized.transport.recommended).toBe("driving");
+  });
+
   it("requires a broad natural-attraction candidate set for travel creation", () => {
     const plan = normalizeTravelPlan(sampleTravelPlan);
 
