@@ -12,6 +12,7 @@ const DEFAULT_DAY_START = { hour: 8, minute: 0 };
 const DEFAULT_RETURN_DAY_START = { hour: 6, minute: 30 };
 const MAX_DATE_RANGE_DAYS = 31;
 const HIGH_DAILY_DRIVING_MINUTES = 8 * 60;
+const MAX_TRUSTED_MODEL_TOTAL_DELTA_MINUTES = 2 * 60;
 
 export type TravelDateRange = {
   startDate: string;
@@ -224,10 +225,18 @@ function totalLegMinutes(leg: PlannedTripLegInput) {
     0,
     Math.round(leg.bufferMinutes ?? componentMinutes)
   );
-  return Math.max(
-    Math.round(leg.routeMinutes) + bufferMinutes,
-    Math.round(leg.totalMinutes ?? 0)
-  );
+  const routeAndBufferMinutes =
+    Math.max(0, Math.round(leg.routeMinutes)) + bufferMinutes;
+  const modelTotalMinutes = Math.round(leg.totalMinutes ?? 0);
+  const modelDelta = modelTotalMinutes - routeAndBufferMinutes;
+
+  // A small delta can be a legitimate venue or transfer buffer supplied by the
+  // model. A large delta often comes from copying a comparison duration (for
+  // example, an overnight transit option); that value must not turn the
+  // selected driving leg into an accidental cross-midnight segment.
+  return modelDelta >= 0 && modelDelta <= MAX_TRUSTED_MODEL_TOTAL_DELTA_MINUTES
+    ? modelTotalMinutes
+    : routeAndBufferMinutes;
 }
 
 function stopMatches(
@@ -281,7 +290,7 @@ export function normalizeTravelItinerarySchedule(
 
   input.legs.forEach((leg, index) => {
     const marker = readDayMarker(legText(leg));
-    const day = Math.min(
+    let day = Math.min(
       dateRange.days,
       Math.max(
         1,
@@ -303,8 +312,38 @@ export function normalizeTravelItinerarySchedule(
       currentDay = day;
     }
 
-    const latestDepartAt = cursor;
-    const targetArriveAt = addMinutes(cursor, totalLegMinutes(leg));
+    const durationMinutes = totalLegMinutes(leg);
+    let latestDepartAt = cursor;
+    let targetArriveAt = addMinutes(latestDepartAt, durationMinutes);
+    const departureDate = formatInTimeZone(
+      latestDepartAt,
+      input.timezone || DEFAULT_TIME_ZONE,
+      "yyyy-MM-dd"
+    );
+    const arrivalDate = formatInTimeZone(
+      targetArriveAt,
+      input.timezone || DEFAULT_TIME_ZONE,
+      "yyyy-MM-dd"
+    );
+
+    if (arrivalDate !== departureDate && day < dateRange.days) {
+      day += 1;
+      previousDay = day;
+      currentDay = day;
+      const date = addCalendarDays(
+        parseDateKey(dateRange.startDate),
+        day - 1
+      );
+      const dateKey = toDateKey(date);
+      const clock =
+        day === dateRange.days || isReturnLeg(leg)
+          ? DEFAULT_RETURN_DAY_START
+          : DEFAULT_DAY_START;
+      latestDepartAt = buildZonedDate(dateKey, clock, input.timezone);
+      targetArriveAt = addMinutes(latestDepartAt, durationMinutes);
+      cursor = latestDepartAt;
+    }
+
     const scheduledLeg = {
       ...leg,
       latestDepartAt,

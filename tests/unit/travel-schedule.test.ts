@@ -86,5 +86,32 @@ describe("travel itinerary schedule", () => {
     expect(times[3]).toEqual(["2026-08-11 06:30", "2026-08-11 17:30"]);
     expect(localTime(result.targetArriveAt)).toBe("2026-08-11 17:30");
   });
-});
 
+  it("does not let an inconsistent comparison total create a cross-midnight leg", () => {
+    const result = normalizeTravelItinerarySchedule({
+      prompt: "请规划2026年8月8日至11日北京出发、锡林郭勒盟自驾4天3晚的旅行",
+      timezone: "Asia/Shanghai",
+      stops: [
+        { order: 0, name: "北京", kind: "origin" },
+        { order: 1, name: "锡林浩特", kind: "destination" },
+      ],
+      legs: [
+        {
+          order: 0,
+          originName: "北京",
+          destinationName: "锡林浩特",
+          routeMinutes: 438,
+          bufferMinutes: 20,
+          totalMinutes: 978,
+          mode: "driving",
+          segmentTitle: "D1·去程",
+        },
+      ],
+    });
+
+    expect(result.legs.map((leg) => [
+      localTime(leg.latestDepartAt),
+      localTime(leg.targetArriveAt),
+    ])).toEqual([["2026-08-08 07:00", "2026-08-08 14:38"]]);
+  });
+});

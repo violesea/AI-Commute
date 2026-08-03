@@ -3,7 +3,7 @@ skills_used: []
 model_used: GPT-5
 model_source: visible_runtime
 created_at: 2026-08-03T00:00:00+08:00
-updated_at: 2026-08-03T15:04:00+08:00
+updated_at: 2026-08-03T15:25:00+08:00
 ---
 
 # Engineering Notes
@@ -25,6 +25,8 @@ updated_at: 2026-08-03T15:04:00+08:00
 设置页的模型下拉框只控制普通通勤规划使用的模型；旅行规划在服务端固定使用 `deepseek-v4-flash`，避免用户误选通勤模型后改变旅行规划契约。模型选项通过 `src/lib/agent/model-config.ts` 集中维护，并由设置 API 校验。
 
 “测试当前模型接入”调用 `/api/settings/test-model`。接口要求登录，拒绝未支持模型；服务器未配置 `OPENAI_API_KEY` 时返回 `not_configured`，已配置时使用 OpenAI-compatible Chat Completions 发起一次无工具最小请求，成功返回模型和耗时，失败只返回截断且脱敏后的错误。API Key 和 Base URL 永不进入页面响应。
+
+时间轴计算不会盲信模型的 `totalMinutes`：当它与路线分钟和明确缓冲的差值超过 2 小时时，按路线证据重新计算，避免把公共交通对照耗时带入自驾腿；同日累计超出午夜的路段会顺延到下一可用旅行日，最后仍由跨午夜安全断言拦截不可执行安排。
 
 ## 验证
 
