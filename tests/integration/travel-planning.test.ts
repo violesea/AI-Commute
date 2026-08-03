@@ -899,6 +899,138 @@ describe("travel planning integration", () => {
     expect(rejectedToolMessage).toContain("创建行程至少需要一个目的地停靠点");
   });
 
+  it("merges a failed complete candidate into a partial route repair", async () => {
+    const user = await prisma.user.create({
+      data: {
+        email: `travel-candidate-merge-${Date.now()}@example.com`,
+        name: "旅行候选合并用户",
+        passwordHash: "hash",
+        settings: {
+          create: {
+            defaultCity: "北京",
+            timezone: "Asia/Shanghai",
+            originName: "北京",
+            originLngLat: "116.4,39.9",
+            routePreference: "balanced",
+          },
+        },
+      },
+    });
+    const session = await startPlanningSession({
+      userId: user.id,
+      purpose: "travel",
+      prompt: "请规划2026年8月8日至11日北京出发、锡林郭勒盟自驾4天3晚的旅行。",
+    });
+    let callCount = 0;
+    let rejectedToolMessage = "";
+    const chatClient: AgentChatClient = {
+      async complete(input) {
+        callCount += 1;
+        rejectedToolMessage = input.messages
+          .filter((message) => message.role === "tool")
+          .at(-1)?.content ?? rejectedToolMessage;
+
+        if (callCount === 1) {
+          return {
+            message: {
+              role: "assistant",
+              content: "提交完整旅行方案。",
+              toolCalls: [
+                {
+                  id: "candidate-merge-first",
+                  name: "create_trip",
+                  arguments: {
+                    title: "首轮完整方案",
+                    timezone: "Asia/Shanghai",
+                    stops: [],
+                    legs: [],
+                    travelPlan,
+                  },
+                },
+              ],
+            },
+          };
+        }
+
+        return {
+          message: {
+            role: "assistant",
+            content: "修正路线并落地旅行方案。",
+            toolCalls: [
+              {
+                id: "candidate-merge-second",
+                name: "create_trip",
+                arguments: {
+                  title: "修正后的北京到锡林郭勒",
+                  timezone: "Asia/Shanghai",
+                  finalStopName: "锡林郭勒",
+                  stops: [
+                    { order: 0, name: "北京", kind: "origin" },
+                    { order: 1, name: "锡林浩特", kind: "destination" },
+                  ],
+                  legs: [
+                    {
+                      order: 0,
+                      originName: "北京",
+                      destinationName: "锡林浩特",
+                      routeMinutes: 120,
+                      totalMinutes: 120,
+                      bufferComponents: [],
+                      mode: "driving",
+                      segmentTitle: "D1·修正后的去程",
+                    },
+                  ],
+                  travelPlan: {
+                    weather: { summary: "第二轮刷新后的天气摘要" },
+                    food: [
+                      {
+                        name: "锡林浩特涮羊肉",
+                        reason: "第二轮重新确认当地用餐安排。",
+                      },
+                    ],
+                  },
+                },
+              },
+            ],
+          },
+        };
+      },
+    };
+
+    const result = await runPlanningSession(session.id, {
+      amapClient: createMockAmapClient(),
+      chatClient,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(callCount).toBe(2);
+    expect(rejectedToolMessage).toContain("创建行程至少需要一个目的地停靠点");
+
+    const persisted = await prisma.trip.findUniqueOrThrow({
+      where: { id: result.tripId! },
+      include: { stops: { orderBy: { order: "asc" } } },
+    });
+    expect(persisted.title).toBe("北京-锡林郭勒");
+    expect(persisted.stops.map((stop) => stop.name)).toEqual([
+      "北京",
+      "锡林浩特",
+    ]);
+    expect(JSON.parse(persisted.travelPlanJson ?? "{}")).toMatchObject({
+      destination: "锡林郭勒盟",
+      weather: { summary: "第二轮刷新后的天气摘要" },
+      lodging: expect.arrayContaining([
+        expect.objectContaining({ name: "正蓝旗酒店" }),
+      ]),
+      food: [
+        expect.objectContaining({
+          name: "锡林浩特涮羊肉",
+          mustTry: "手切羊肉",
+          reason: "第二轮重新确认当地用餐安排。",
+        }),
+      ],
+    });
+  });
+
   it("persists failed create_trip validation and stops repeated identical errors", async () => {
     const user = await prisma.user.create({
       data: {

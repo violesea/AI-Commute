@@ -2199,12 +2199,56 @@ export function stringifyToolResult(result: unknown) {
   });
 }
 
-function stringifyToolError(error: unknown) {
+export function stringifyToolError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   let instruction =
     "工具调用未执行成功。请根据错误修正参数后重新调用同一个工具，不要只返回文字。";
+  let recovery:
+    | {
+        constraintType: "daylight_driving" | "daily_driving_limit";
+        mustChange: string[];
+        preserve: string[];
+      }
+    | undefined;
 
-  if (message.includes("travelPlan.weather.summary")) {
+  if (
+    message.includes("不能把这段夜间自驾落盘") ||
+    (message.includes("日落") && message.includes("安全线"))
+  ) {
+    instruction =
+      "本次 create_trip 因白天驾驶安全线被拒绝。下一次调用必须实际改变对应 stops 和 legs：提前出发或提前返程并在安全线前到达，或增加途中住宿拆分路段，或缩短/删除远端景点；不能重复被拒的到达时间和路线。travelPlan 的天气、景点、住宿、美食、预算和避坑可以沿用，只需同步变更后的自驾路段天气风险。请立即重新调用完整 create_trip。";
+    recovery = {
+      constraintType: "daylight_driving",
+      mustChange: ["stops", "legs", "对应路段的 travelPlan.weather.routeRisks"],
+      preserve: [
+        "travelPlan.destination",
+        "travelPlan.weather",
+        "travelPlan.transport",
+        "travelPlan.budget",
+        "travelPlan.attractions",
+        "travelPlan.lodging",
+        "travelPlan.food",
+        "travelPlan.pitfalls",
+      ],
+    };
+  } else if (message.includes("超过用户指定的每日上限")) {
+    instruction =
+      "本次 create_trip 因单日自驾总时长超过用户上限被拒绝。下一次调用必须实际改变对应 stops 和 legs：把转场拆到下一天并增加住宿，或减少/删除远端景点，或调整路线；不能重复被拒的日期和驾驶分钟数。travelPlan 的其他完整区块可以沿用，并同步变更后的自驾路段天气风险。请立即重新调用完整 create_trip。";
+    recovery = {
+      constraintType: "daily_driving_limit",
+      mustChange: ["stops", "legs", "对应路段的 travelPlan.weather.routeRisks"],
+      preserve: [
+        "travelPlan.destination",
+        "travelPlan.weather",
+        "travelPlan.transport",
+        "travelPlan.budget",
+        "travelPlan.attractions",
+        "travelPlan.lodging",
+        "travelPlan.food",
+        "travelPlan.pitfalls",
+      ],
+    };
+  } else if (message.includes("travelPlan.weather.summary")) {
     instruction =
       "保留上一版完整 travelPlan 的 destination、weather、transport、budget、attractions、lodging、food、pitfalls；只修正 weather.summary。weather.summary 必须是非空纯文本字符串，不能省略 weather 或 transport，不能把对象写成字符串。请立即重新调用完整 create_trip。";
   } else if (message.includes("travelPlan.weather")) {
@@ -2221,7 +2265,131 @@ function stringifyToolError(error: unknown) {
   return JSON.stringify({
     error: message,
     instruction,
+    ...(recovery ? { recovery } : {}),
   });
+}
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function isMissingCandidateValue(value: unknown) {
+  return value === undefined || value === null;
+}
+
+function candidateArrayItemKey(value: unknown) {
+  if (!isRecordValue(value)) return undefined;
+
+  if (typeof value.name === "string" && value.name.trim()) {
+    return `name:${value.name.trim().toLowerCase()}`;
+  }
+
+  if (typeof value.title === "string" && value.title.trim()) {
+    return `title:${value.title.trim().toLowerCase()}`;
+  }
+
+  if (typeof value.date === "string" && value.date.trim()) {
+    return `date:${value.date.trim()}`;
+  }
+
+  if (typeof value.legOrder === "number" && Number.isFinite(value.legOrder)) {
+    return `leg:${value.legOrder}`;
+  }
+
+  if (typeof value.category === "string" && value.category.trim()) {
+    return `category:${value.category.trim().toLowerCase()}`;
+  }
+
+  return undefined;
+}
+
+function mergeCreateTripCandidateValue(
+  previous: unknown,
+  current: unknown,
+  path: string
+): unknown {
+  if (isMissingCandidateValue(current)) {
+    return previous;
+  }
+
+  if (isRecordValue(previous) && isRecordValue(current)) {
+    const merged: Record<string, unknown> = { ...previous };
+    for (const [key, value] of Object.entries(current)) {
+      merged[key] = mergeCreateTripCandidateValue(
+        previous[key],
+        value,
+        path ? `${path}.${key}` : key
+      );
+    }
+    return merged;
+  }
+
+  if (Array.isArray(previous) && Array.isArray(current)) {
+    const usedPreviousIndexes = new Set<number>();
+    const mergedCurrent = current.map((currentItem, index) => {
+      const currentKey = candidateArrayItemKey(currentItem);
+      let previousIndex = currentKey
+        ? previous.findIndex(
+            (previousItem, previousItemIndex) =>
+              !usedPreviousIndexes.has(previousItemIndex) &&
+              candidateArrayItemKey(previousItem) === currentKey
+          )
+        : -1;
+
+      if (previousIndex < 0 && !currentKey && index < previous.length) {
+        previousIndex = index;
+      }
+
+      if (previousIndex < 0) {
+        return currentItem;
+      }
+
+      usedPreviousIndexes.add(previousIndex);
+      return mergeCreateTripCandidateValue(
+        previous[previousIndex],
+        currentItem,
+        `${path}[${index}]`
+      );
+    });
+
+    // Route risks are keyed to the current route. Keeping an unreferenced old
+    // risk would make a route replacement look weather-covered when it is not.
+    if (path.endsWith("weather.routeRisks")) {
+      return mergedCurrent;
+    }
+
+    // Recommendation and forecast arrays may be truncated by a model repair.
+    // Retain unmentioned prior items so coverage validation still sees the
+    // previously complete candidate; explicit current items always win.
+    return [
+      ...mergedCurrent,
+      ...previous.filter((_, index) => !usedPreviousIndexes.has(index)),
+    ];
+  }
+
+  return current;
+}
+
+function mergeCreateTripCandidate(
+  previous: Record<string, unknown>,
+  current: Record<string, unknown>
+) {
+  const merged = mergeCreateTripCandidateValue(previous, current, "") as Record<
+    string,
+    unknown
+  >;
+
+  // A route repair is the model's explicit decision. Never merge stop/leg
+  // items by index, because doing so could silently restore the unsafe route.
+  for (const key of ["stops", "legs"] as const) {
+    if (Array.isArray(current[key])) {
+      merged[key] = current[key];
+    } else if (isMissingCandidateValue(current[key])) {
+      merged[key] = previous[key];
+    }
+  }
+
+  return merged;
 }
 
 const CONTINUATION_COMPLETION_TOOL_NAMES = new Set([
@@ -2257,6 +2425,7 @@ async function runConversationAttempt(input: {
   let conversationRounds = 0;
   let createTripFailureCount = 0;
   let lastToolExecutionError: unknown = null;
+  let lastCreateTripCandidate: Record<string, unknown> | null = null;
   const identicalCreateTripFailures = new Map<string, number>();
 
   function noteCreateTripFailure(error: unknown) {
@@ -2414,9 +2583,19 @@ async function runConversationAttempt(input: {
       }
 
       let result: unknown;
+      const executionToolCall: AgentChatToolCall =
+        toolCall.name === "create_trip" && lastCreateTripCandidate
+          ? {
+              ...toolCall,
+              arguments: mergeCreateTripCandidate(
+                lastCreateTripCandidate,
+                toolCall.arguments
+              ),
+            }
+          : toolCall;
       try {
         result = await executeToolCall(
-          toolCall,
+          executionToolCall,
           input.context,
           input.settings
         );
@@ -2424,6 +2603,13 @@ async function runConversationAttempt(input: {
         assertAgentRunActive(input.signal);
         hadToolExecutionError = true;
         lastToolExecutionError = error;
+        if (toolCall.name === "create_trip") {
+          const currentCandidate: Record<string, unknown> =
+            executionToolCall.arguments;
+          if (Object.keys(currentCandidate).length > 0) {
+            lastCreateTripCandidate = currentCandidate;
+          }
+        }
         input.messages.push({
           role: "tool",
           toolCallId: toolCall.id,
