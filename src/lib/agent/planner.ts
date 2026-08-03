@@ -1471,10 +1471,11 @@ async function normalizeTravelPlanForContext(
 function completeTravelPlanArgument(args: Record<string, unknown>) {
   return completeTravelPlanArrayPayload(args.travelPlan, {
     attractions: args.attractions,
-    lodging: args.lodging,
-    food: args.food,
-    pitfalls: args.pitfalls,
-  });
+      lodging: args.lodging,
+      food: args.food,
+      pitfalls: args.pitfalls,
+      budget: args.budget,
+    });
 }
 
 async function normalizeCreateTripInput(
@@ -2248,6 +2249,9 @@ export function stringifyToolError(error: unknown) {
         "travelPlan.pitfalls",
       ],
     };
+  } else if (message.includes("必须提供总预算")) {
+    instruction =
+      "上一版旅行计划的住宿、美食、景点、天气和路线可以保留；本次只需补齐 travelPlan.budget。budget 必须是对象，包含 currency、total 和至少一项 breakdown（每项含 category、amount；未知价格写明待核实），不能只把 budget 放在 travelPlan 外。请立即重新调用完整 create_trip。";
   } else if (message.includes("travelPlan.weather.summary")) {
     instruction =
       "保留上一版完整 travelPlan 的 destination、weather、transport、budget、attractions、lodging、food、pitfalls；只修正 weather.summary。weather.summary 必须是非空纯文本字符串，不能省略 weather 或 transport，不能把对象写成字符串。请立即重新调用完整 create_trip。";

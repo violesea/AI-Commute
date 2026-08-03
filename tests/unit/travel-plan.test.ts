@@ -193,12 +193,14 @@ describe("travel plan normalization", () => {
       lodging: undefined,
       food: undefined,
       pitfalls: undefined,
+      budget: undefined,
     };
     const completed = completeTravelPlanArrayPayload(flattened, {
       attractions: sampleTravelPlan.attractions,
       lodging: sampleTravelPlan.lodging,
       food: sampleTravelPlan.food,
       pitfalls: sampleTravelPlan.pitfalls,
+      budget: sampleTravelPlan.budget,
     });
 
     expect(normalizeTravelPlan(completed)).toMatchObject({
@@ -214,6 +216,7 @@ describe("travel plan normalization", () => {
       pitfalls: expect.arrayContaining([
         expect.objectContaining({ title: "提前预约" }),
       ]),
+      budget: expect.objectContaining({ total: "¥1,500-2,500/人" }),
     });
   });
 

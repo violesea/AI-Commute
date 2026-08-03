@@ -934,7 +934,9 @@ const TRAVEL_PLAN_ARRAY_FIELDS = [
  */
 export function completeTravelPlanArrayPayload(
   value: unknown,
-  fallback: Partial<Record<(typeof TRAVEL_PLAN_ARRAY_FIELDS)[number], unknown>>
+  fallback: Partial<
+    Record<(typeof TRAVEL_PLAN_ARRAY_FIELDS)[number], unknown>
+  > & { budget?: unknown }
 ) {
   const plan = readRecord(value, "travelPlan");
   const completed = { ...plan };
@@ -943,6 +945,10 @@ export function completeTravelPlanArrayPayload(
     if (!Array.isArray(completed[field]) && Array.isArray(fallback[field])) {
       completed[field] = fallback[field];
     }
+  }
+
+  if (!isRecord(completed.budget) && isRecord(fallback.budget)) {
+    completed.budget = fallback.budget;
   }
 
   return completed;

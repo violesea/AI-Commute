@@ -295,11 +295,13 @@ describe("travel planning integration", () => {
                     lodging: undefined,
                     food: undefined,
                     pitfalls: undefined,
+                    budget: undefined,
                   },
                   attractions: travelPlan.attractions,
                   lodging: travelPlan.lodging,
                   food: travelPlan.food,
                   pitfalls: travelPlan.pitfalls,
+                  budget: travelPlan.budget,
                 },
               },
             ],
@@ -330,6 +332,7 @@ describe("travel planning integration", () => {
       pitfalls: expect.arrayContaining([
         expect.objectContaining({ title: "天气待核实" }),
       ]),
+      budget: expect.objectContaining({ total: "¥3,000-4,500/车" }),
     });
   });
 

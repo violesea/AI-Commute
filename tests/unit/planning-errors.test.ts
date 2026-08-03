@@ -37,6 +37,11 @@ describe("planning error display", () => {
         )
       )
     );
+    const budget = JSON.parse(
+      stringifyToolError(
+        new Error("旅行规划必须提供总预算和至少一项费用分解；未知价格请明确标注待核实。")
+      )
+    );
 
     expect(daylight.recovery).toMatchObject({
       constraintType: "daylight_driving",
@@ -46,5 +51,6 @@ describe("planning error display", () => {
       constraintType: "daily_driving_limit",
       mustChange: expect.arrayContaining(["stops", "legs"]),
     });
+    expect(budget.instruction).toContain("只需补齐 travelPlan.budget");
   });
 });
