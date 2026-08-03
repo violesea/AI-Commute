@@ -6,7 +6,7 @@ skills_used:
 model_used: GPT-5
 model_source: visible_runtime
 created_at: 2026-08-03T00:00:00+08:00
-updated_at: 2026-08-03T18:24:00+08:00
+updated_at: 2026-08-03T21:07:34+08:00
 updated_by: codex
 ---
 
@@ -25,6 +25,7 @@ updated_by: codex
 
 - 让用户在旅行规划页显式编辑出发时间、节奏和预算上限。
 - 将天气、道路封闭和景区开放状态合并为可解释的风险决策卡。
+- 降低复杂旅行请求的 `create_trip` 重试次数和端到端响应时间。
 
 ## Later
 
