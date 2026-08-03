@@ -1565,6 +1565,14 @@ export function stringifyToolResult(result: unknown) {
   });
 }
 
+function stringifyToolError(error: unknown) {
+  return JSON.stringify({
+    error: error instanceof Error ? error.message : String(error),
+    instruction:
+      "工具调用未执行成功。请根据错误修正参数后重新调用同一个工具，不要只返回文字。",
+  });
+}
+
 const CONTINUATION_COMPLETION_TOOL_NAMES = new Set([
   "replace_trip_stops",
   "replace_trip_legs",
@@ -1668,6 +1676,8 @@ async function runConversationAttempt(input: {
       };
     }
 
+    let hadToolExecutionError = false;
+
     for (const toolCall of toolCalls) {
       assertAgentRunActive(input.signal);
 
@@ -1687,11 +1697,23 @@ async function runConversationAttempt(input: {
         continue;
       }
 
-      const result = await executeToolCall(
-        toolCall,
-        input.context,
-        input.settings
-      );
+      let result: unknown;
+      try {
+        result = await executeToolCall(
+          toolCall,
+          input.context,
+          input.settings
+        );
+      } catch (error) {
+        assertAgentRunActive(input.signal);
+        hadToolExecutionError = true;
+        input.messages.push({
+          role: "tool",
+          toolCallId: toolCall.id,
+          content: stringifyToolError(error),
+        });
+        continue;
+      }
       const explicitTripId = readOptionalString(toolCall.arguments, "tripId");
       if (explicitTripId) {
         input.context.tripId = explicitTripId;
@@ -1722,6 +1744,10 @@ async function runConversationAttempt(input: {
           };
         }
       }
+    }
+
+    if (hadToolExecutionError) {
+      continue;
     }
 
     if (shouldCompleteContinuationAfterTools(toolCalls, input.requireCreateTrip)) {

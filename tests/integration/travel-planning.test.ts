@@ -376,4 +376,93 @@ describe("travel planning integration", () => {
     expect(toolChoices[1]).toBeUndefined();
     expect(toolChoices[2]).toBeUndefined();
   });
+
+  it("returns rejected tool calls to the model for correction", async () => {
+    const user = await prisma.user.create({
+      data: {
+        email: `travel-tool-retry-${Date.now()}@example.com`,
+        name: "旅行工具重试用户",
+        passwordHash: "hash",
+        settings: {
+          create: {
+            defaultCity: "北京",
+            timezone: "Asia/Shanghai",
+            originName: "北京",
+            originLngLat: "116.4,39.9",
+            routePreference: "balanced",
+          },
+        },
+      },
+    });
+    const session = await startPlanningSession({
+      userId: user.id,
+      purpose: "travel",
+      prompt: "请规划2026年8月8日至11日北京出发、锡林郭勒盟自驾4天3晚的旅行。",
+    });
+    let callCount = 0;
+    let rejectedToolMessage = "";
+    const chatClient: AgentChatClient = {
+      async complete(input) {
+        callCount += 1;
+        rejectedToolMessage = input.messages
+          .filter((message) => message.role === "tool")
+          .at(-1)?.content ?? rejectedToolMessage;
+
+        return {
+          message: {
+            role: "assistant",
+            content: "创建旅行行程。",
+            toolCalls: [
+              {
+                id: `create-retry-${callCount}`,
+                name: "create_trip",
+                arguments:
+                  callCount === 1
+                    ? {
+                        title: "无效旅行行程",
+                        timezone: "Asia/Shanghai",
+                        stops: [],
+                        legs: [],
+                        travelPlan,
+                      }
+                    : {
+                        title: "北京到锡林郭勒",
+                        timezone: "Asia/Shanghai",
+                        finalStopName: "锡林浩特",
+                        stops: [
+                          { order: 0, name: "北京", kind: "origin" },
+                          { order: 1, name: "锡林浩特", kind: "destination" },
+                        ],
+                        legs: [
+                          {
+                            order: 0,
+                            originName: "北京",
+                            destinationName: "锡林浩特",
+                            routeMinutes: 120,
+                            bufferMinutes: 0,
+                            totalMinutes: 120,
+                            bufferComponents: [],
+                            mode: "driving",
+                            segmentTitle: "D1·去程",
+                          },
+                        ],
+                        travelPlan,
+                      },
+              },
+            ],
+          },
+        };
+      },
+    };
+
+    const result = await runPlanningSession(session.id, {
+      amapClient: createMockAmapClient(),
+      chatClient,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.tripId).toBeTruthy();
+    expect(callCount).toBe(2);
+    expect(rejectedToolMessage).toContain("创建行程至少需要一个目的地停靠点");
+  });
 });
