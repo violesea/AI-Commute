@@ -494,7 +494,7 @@ describe("sample-aligned UI components", () => {
           },
           transport: {
             recommended: "mixed",
-            reason: "郊区自驾与市区公共交通结合",
+            reason: "模型估算自驾约 15.5 小时，公共交通约 48 分钟",
             driving: {
               summary: "约 36 分钟",
               reason: "方便串联景点",
@@ -568,6 +568,8 @@ describe("sample-aligned UI components", () => {
     expect(html).toContain("自驾路段天气风险");
     expect(html).toContain("自驾方案");
     expect(html).toContain("按已落盘路线，自驾 1195 分钟（约 19.9 小时）");
+    expect(html).toContain("自驾总时长以已落盘路线事实为准");
+    expect(html).not.toContain("模型估算自驾约 15.5 小时");
     expect(html).toContain("公共交通方案");
     expect(html).toContain("自然景观");
     expect(html).toContain("人文历史");

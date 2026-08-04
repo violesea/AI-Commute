@@ -444,7 +444,11 @@ export function TravelPlanCard({
             {plan.transport.recommended === "mixed" ? "自驾 + 公共交通" : transportLabel(plan.transport.recommended)}
           </div>
         </div>
-        <p className="mt-3 text-sm leading-6 text-[#434655]">{plan.transport.reason}</p>
+        <p className="mt-3 text-sm leading-6 text-[#434655]">
+          {routeStats
+            ? "已比较自驾与公共交通；自驾总时长以已落盘路线事实为准，公共交通时长仍需按实际班次和临期路况核验。"
+            : plan.transport.reason}
+        </p>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           <div className="rounded-2xl border border-[#c3c6d7]/55 bg-white/60 p-4">
             <div className="flex items-center gap-2 text-sm font-bold text-[#191c1e]">
