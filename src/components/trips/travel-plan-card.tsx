@@ -246,6 +246,19 @@ export function TravelPlanCard({
                     备选，不计入本次覆盖：{plan.routeCoverage.alternativeAttractions.join("、")}
                   </p>
                 ) : null}
+                {plan.routeCoverage.requestedNaturalTypes?.length ? (
+                  <p className="mt-1">
+                    用户点名自然类型：{plan.routeCoverage.requestedNaturalTypes.join("、")}
+                    {plan.routeCoverage.unmetNaturalTypes?.length
+                      ? `；未覆盖：${plan.routeCoverage.unmetNaturalTypes.join("、")}`
+                      : "；均已进入主路线"}
+                  </p>
+                ) : null}
+                {plan.routeCoverage.coverageNotes?.length ? (
+                  <p className="mt-1 text-[#92400e]">
+                    覆盖说明：{plan.routeCoverage.coverageNotes.join("；")}
+                  </p>
+                ) : null}
               </div>
             ) : null}
             {routeStats ? (
@@ -529,6 +542,13 @@ export function TravelPlanCard({
                 <article className="rounded-2xl bg-white/60 p-4" key={`${lodging.area}-${lodging.name}`}>
                   <h3 className="text-sm font-bold text-[#191c1e]">{lodging.name}</h3>
                   <p className="mt-1 text-xs font-semibold text-[#737686]">{lodging.area}</p>
+                  {lodging.address || lodging.lngLat ? (
+                    <p className="mt-1 text-[11px] leading-5 text-[#737686]">
+                      {[lodging.address, lodging.lngLat ? `坐标 ${lodging.lngLat}` : null]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </p>
+                  ) : null}
                   <p className="mt-2 text-sm leading-6 text-[#434655]">{lodging.reason}</p>
                   {lodging.budget || lodging.notes ? (
                     <p className="mt-2 text-xs leading-5 text-[#737686]">
@@ -556,6 +576,13 @@ export function TravelPlanCard({
                   <h3 className="text-sm font-bold text-[#191c1e]">{food.name}</h3>
                   {food.area ? (
                     <p className="mt-1 text-xs font-semibold text-[#737686]">{food.area}</p>
+                  ) : null}
+                  {food.address || food.lngLat ? (
+                    <p className="mt-1 text-[11px] leading-5 text-[#737686]">
+                      {[food.address, food.lngLat ? `坐标 ${food.lngLat}` : null]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </p>
                   ) : null}
                   <p className="mt-2 text-sm font-bold leading-6 text-[#191c1e]">
                     推荐尝试：{food.mustTry}

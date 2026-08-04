@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { jsonrepair } from "jsonrepair";
 import type { TravelPlan } from "@/lib/trips/travel-plan";
 import {
-  DEFAULT_PLANNING_MODEL,
+  getDefaultPlanningModel,
   TRAVEL_PLANNING_MODEL,
 } from "@/lib/agent/model-config";
 
@@ -287,7 +287,7 @@ export function createOpenAiChatClient(
   return {
     async complete(input) {
       const model =
-        input.model?.trim() || env.OPENAI_MODEL?.trim() || DEFAULT_PLANNING_MODEL;
+        input.model?.trim() || getDefaultPlanningModel(env);
       const maxOutputTokens = input.maxOutputTokens ?? AGENT_MAX_OUTPUT_TOKENS;
       const startedAt = Date.now();
       const useStrictTravelTools =

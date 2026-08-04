@@ -93,6 +93,7 @@ export async function createPlannedTrip(input: CreatePlannedTripInput) {
       timezone: input.timezone,
       stops: orderedStops,
       legs: orderedLegs,
+      lodging: input.travelPlan.lodging,
     });
   }
 

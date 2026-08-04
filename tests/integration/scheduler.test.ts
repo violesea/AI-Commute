@@ -5,6 +5,7 @@ import { startPlanningSession } from "@/lib/agent/planner";
 import { prisma } from "@/lib/db";
 import { processDueReminderJobs } from "@/lib/scheduler/process-job";
 import { createPlannedTrip } from "@/lib/trips/create-trip";
+import type { TravelPlan } from "@/lib/trips/travel-plan";
 import { ensureTestDatabase } from "./test-db";
 
 const sendTelegramMock = vi.hoisted(() => vi.fn());
@@ -730,6 +731,169 @@ describe("scheduler reminder processing", () => {
     expect(weatherAmapClient.getWeather).toHaveBeenCalledWith({
       city: "杭州市",
     });
+  });
+
+  it("writes the latest weather snapshot after a travel weather refresh", async () => {
+    const now = new Date("2026-08-04T00:00:00.000Z");
+    const user = await createSchedulerUser("scheduler-travel-weather-refresh");
+    const session = await startPlanningSession({
+      userId: user.id,
+      purpose: "travel",
+      prompt: "请规划一次北京到锡林郭勒的自驾旅行。",
+    });
+    const travelPlan: TravelPlan = {
+      destination: "锡林郭勒",
+      summary: "天气刷新测试行程",
+      days: 1,
+      weather: {
+        city: "锡林浩特",
+        summary: "旧天气快照",
+        advice: "出发前刷新",
+        forecast: [
+          {
+            date: "2026-08-01",
+            summary: "旧预报",
+            risk: "medium",
+          },
+        ],
+        routeRisks: [
+          {
+            legOrder: 1,
+            route: "北京→锡林郭勒",
+            summary: "旧风险",
+            risk: "medium",
+            drivingAdvice: "出发前刷新",
+          },
+        ],
+        dynamicMonitoring: true,
+        refreshPolicy: "出发前刷新天气",
+      },
+      transport: {
+        recommended: "driving",
+        reason: "景点分散",
+        driving: {
+          summary: "自驾约 120 分钟",
+          reason: "方便串联景点",
+          durationMinutes: 120,
+          route: "高速",
+        },
+        transit: {
+          summary: "公共交通约 240 分钟",
+          reason: "换乘较多",
+          durationMinutes: 240,
+          route: "铁路与接驳",
+        },
+      },
+      budget: {
+        currency: "CNY",
+        total: "待核实",
+        breakdown: [{ category: "住宿", amount: "待核实" }],
+      },
+      attractions: [
+        { name: "锡林郭勒草原", category: "natural", reason: "草原风光" },
+      ],
+      lodging: [],
+      food: [],
+      pitfalls: [],
+    };
+    const latestDepartAt = new Date(now.getTime() + 72 * 60 * 60_000);
+    const trip = await createPlannedTrip({
+      userId: user.id,
+      agentSessionId: session.id,
+      rawPrompt: "请规划一次北京到锡林郭勒的自驾旅行。",
+      timezone: "Asia/Shanghai",
+      title: "北京到锡林郭勒天气刷新",
+      finalStopName: "锡林郭勒",
+      targetArriveAt: new Date(latestDepartAt.getTime() + 120 * 60_000),
+      stops: [
+        { order: 0, name: "北京", lngLat: "116.4,39.9", kind: "origin" },
+        {
+          order: 1,
+          name: "锡林郭勒",
+          lngLat: "116.1,43.9",
+          kind: "destination",
+        },
+      ],
+      legs: [
+        {
+          order: 0,
+          originName: "北京",
+          originLngLat: "116.4,39.9",
+          destinationName: "锡林郭勒",
+          destinationLngLat: "116.1,43.9",
+          routeMinutes: 120,
+          totalMinutes: 120,
+          mode: "driving",
+          latestDepartAt,
+          targetArriveAt: new Date(latestDepartAt.getTime() + 120 * 60_000),
+          segmentTitle: "D1·去程",
+        },
+      ],
+      travelPlan,
+    });
+    await prisma.agentSession.update({
+      where: { id: session.id },
+      data: { status: "completed", tripId: trip.id },
+    });
+    const weatherJob = await prisma.reminderJob.findFirstOrThrow({
+      where: { tripId: trip.id, kind: "weather_refresh", scheduledFor: now },
+    });
+    let calls = 0;
+    const chatClient: AgentChatClient = {
+      async complete({ messages }) {
+        calls += 1;
+        const hasWeatherResult = messages.some(
+          (message) =>
+            message.role === "tool" && message.content.includes("天气参考")
+        );
+        if (!hasWeatherResult) {
+          return {
+            message: {
+              role: "assistant",
+              content: "先读取当前天气。",
+              toolCalls: [
+                {
+                  id: "travel-weather-refresh",
+                  name: "get_weather_reference",
+                  arguments: { city: "锡林浩特" },
+                },
+              ],
+            },
+          };
+        }
+
+        return {
+          message: {
+            role: "assistant",
+            content: "已完成天气复查。",
+          },
+        };
+      },
+    };
+
+    const result = await processDueReminderJobs({
+      now,
+      agentOptions: { amapClient, chatClient },
+    });
+
+    expect(result.failed).toBe(0);
+    expect(result.completed).toBeGreaterThanOrEqual(1);
+    expect(calls).toBeGreaterThanOrEqual(2);
+    await expect(
+      prisma.reminderJob.findUniqueOrThrow({ where: { id: weatherJob.id } })
+    ).resolves.toMatchObject({ status: "completed" });
+    const persisted = await prisma.trip.findUniqueOrThrow({
+      where: { id: trip.id },
+      select: { travelPlanJson: true },
+    });
+    const refreshedPlan = JSON.parse(persisted.travelPlanJson ?? "null") as TravelPlan;
+    expect(refreshedPlan.weather).toMatchObject({
+      city: "锡林浩特",
+      source: "高德天气参考",
+      summary: expect.stringContaining("天气参考"),
+    });
+    expect(refreshedPlan.weather.observedAt).toBeTruthy();
+    expect(refreshedPlan.weather.forecastAvailableThrough).toBeTruthy();
   });
 });
 

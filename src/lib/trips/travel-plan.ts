@@ -20,6 +20,9 @@ export type TravelAttractionRouteStatus = "planned" | "alternative";
 export type TravelRouteCoverage = {
   plannedAttractions: string[];
   alternativeAttractions: string[];
+  requestedNaturalTypes?: string[];
+  unmetNaturalTypes?: string[];
+  coverageNotes?: string[];
 };
 
 export type TravelRecommendationEvidence = {
@@ -99,6 +102,9 @@ export type TravelLodging = {
   name: string;
   area: string;
   reason: string;
+  poiId?: string;
+  address?: string;
+  lngLat?: string;
   budget?: string;
   notes?: string;
   evidence?: TravelRecommendationEvidence;
@@ -109,6 +115,9 @@ export type TravelFood = {
   area?: string;
   mustTry: string;
   reason: string;
+  poiId?: string;
+  address?: string;
+  lngLat?: string;
   budget?: string;
   notes?: string;
   evidence?: TravelRecommendationEvidence;
@@ -591,6 +600,9 @@ function normalizeLodging(value: unknown): TravelLodging {
     name: readText(record, "name", "travelPlan.lodging[]")!,
     area: readText(record, "area", "travelPlan.lodging[]")!,
     reason: readText(record, "reason", "travelPlan.lodging[]")!,
+    poiId: readText(record, "poiId", "travelPlan.lodging[]", false),
+    address: readText(record, "address", "travelPlan.lodging[]", false),
+    lngLat: readText(record, "lngLat", "travelPlan.lodging[]", false),
     budget: readText(record, "budget", "travelPlan.lodging[]", false),
     notes: readText(record, "notes", "travelPlan.lodging[]", false),
     evidence: normalizeRecommendationEvidence(
@@ -608,6 +620,9 @@ function normalizeFood(value: unknown): TravelFood {
     area: readText(record, "area", "travelPlan.food[]", false),
     mustTry: readText(record, "mustTry", "travelPlan.food[]")!,
     reason: readText(record, "reason", "travelPlan.food[]")!,
+    poiId: readText(record, "poiId", "travelPlan.food[]", false),
+    address: readText(record, "address", "travelPlan.food[]", false),
+    lngLat: readText(record, "lngLat", "travelPlan.food[]", false),
     budget: readText(record, "budget", "travelPlan.food[]", false),
     notes: readText(record, "notes", "travelPlan.food[]", false),
     evidence: normalizeRecommendationEvidence(
@@ -724,6 +739,21 @@ export function normalizeTravelPlan(value: unknown): TravelPlan {
               "alternativeAttractions",
               "travelPlan.routeCoverage"
             ) ?? [],
+          requestedNaturalTypes: readOptionalStringArray(
+            routeCoverageRecord,
+            "requestedNaturalTypes",
+            "travelPlan.routeCoverage"
+          ),
+          unmetNaturalTypes: readOptionalStringArray(
+            routeCoverageRecord,
+            "unmetNaturalTypes",
+            "travelPlan.routeCoverage"
+          ),
+          coverageNotes: readOptionalStringArray(
+            routeCoverageRecord,
+            "coverageNotes",
+            "travelPlan.routeCoverage"
+          ),
         }
       : undefined,
     weather: {
@@ -787,6 +817,10 @@ function normalizePlaceName(value?: string | null) {
   return (value ?? "")
     .trim()
     .toLowerCase()
+    .replace(
+      /(?:住宿|酒店|宾馆|民宿|客栈|过夜|返(?:回)?驻地|驻地|第?\d+天|d\d+)/gi,
+      ""
+    )
     .replace(/[\s（）()【】［］[\]·•,，。:：/\\_\-—]/g, "");
 }
 
@@ -822,6 +856,52 @@ function sameLngLat(left?: string | null, right?: string | null) {
   );
 }
 
+function parseLngLat(value?: string | null) {
+  const parts = value?.split(",").map((part) => Number(part.trim()));
+  if (
+    !parts ||
+    parts.length !== 2 ||
+    parts.some((part) => !Number.isFinite(part)) ||
+    parts[0] < -180 ||
+    parts[0] > 180 ||
+    parts[1] < -90 ||
+    parts[1] > 90
+  ) {
+    return undefined;
+  }
+
+  return { longitude: parts[0], latitude: parts[1] };
+}
+
+function distanceInMeters(left?: string | null, right?: string | null) {
+  const leftPoint = parseLngLat(left);
+  const rightPoint = parseLngLat(right);
+  if (!leftPoint || !rightPoint) return undefined;
+
+  const earthRadiusMeters = 6_371_000;
+  const toRadians = (value: number) => (value * Math.PI) / 180;
+  const latitudeDelta = toRadians(rightPoint.latitude - leftPoint.latitude);
+  const longitudeDelta = toRadians(rightPoint.longitude - leftPoint.longitude);
+  const leftLatitude = toRadians(leftPoint.latitude);
+  const rightLatitude = toRadians(rightPoint.latitude);
+  const haversine =
+    Math.sin(latitudeDelta / 2) ** 2 +
+    Math.sin(longitudeDelta / 2) ** 2 *
+      Math.cos(leftLatitude) *
+      Math.cos(rightLatitude);
+
+  return 2 * earthRadiusMeters * Math.asin(Math.sqrt(haversine));
+}
+
+function sameLngLatWithin(
+  left?: string | null,
+  right?: string | null,
+  maxMeters = 80
+) {
+  const distance = distanceInMeters(left, right);
+  return distance !== undefined && distance <= maxMeters;
+}
+
 const CONCRETE_ATTRACTION_STOP_PATTERN =
   /草原|草甸|牧场|湖|湿地|森林|公园|景区|旅游区|火山|地质|山|峰|岭|河|峡谷|瀑布|观景|遗址|古城|寺|博物馆|纪念馆|故居|lake|wetland|forest|park|mountain|river|canyon|waterfall|viewpoint|museum|ruins/i;
 
@@ -833,7 +913,7 @@ function isAttractionRouteStop(
 
   const matchesAttraction =
     samePlace(attraction.name, stop.name) ||
-    sameLngLat(attraction.lngLat, stop.lngLat);
+    sameLngLatWithin(attraction.lngLat, stop.lngLat, 250);
   if (!matchesAttraction) return false;
 
   return CONCRETE_ATTRACTION_STOP_PATTERN.test(
@@ -906,7 +986,7 @@ function isPlannedAttraction(
     (stop, stopIndex) =>
       !isGenericRouteStop(stop, attraction) &&
       (samePlace(attraction.name, stop.name) ||
-        sameLngLat(attraction.lngLat, stop.lngLat)) &&
+        sameLngLatWithin(attraction.lngLat, stop.lngLat, 250)) &&
       hasRouteForStop(stop, stopIndex, legs)
   );
 }
@@ -922,7 +1002,7 @@ function isExactRouteStopMatch(
 
     return (
       (Boolean(attractionName) && attractionName === normalizePlaceName(stop.name)) ||
-      sameLngLat(attraction.lngLat, stop.lngLat)
+      sameLngLatWithin(attraction.lngLat, stop.lngLat, 120)
     );
   });
 }
@@ -939,7 +1019,7 @@ function sameAttractionIdentity(
   left: TravelAttraction,
   right: TravelAttraction
 ) {
-  if (sameLngLat(left.lngLat, right.lngLat)) {
+  if (sameLngLatWithin(left.lngLat, right.lngLat, 80)) {
     return true;
   }
 
@@ -1022,10 +1102,99 @@ function deduplicateAttractions(
   return deduplicated;
 }
 
+type NamedPlaceRecommendation = {
+  name: string;
+  poiId?: string;
+  address?: string;
+  lngLat?: string;
+  evidence?: TravelRecommendationEvidence;
+};
+
+function isProviderBackedRecommendation(item: NamedPlaceRecommendation) {
+  return item.evidence?.source === "amap_poi";
+}
+
+function sameRecommendationIdentity(
+  left: NamedPlaceRecommendation,
+  right: NamedPlaceRecommendation
+) {
+  if (left.poiId && right.poiId && left.poiId === right.poiId) {
+    return true;
+  }
+
+  if (sameLngLatWithin(left.lngLat, right.lngLat, 50)) {
+    return true;
+  }
+
+  const namesMatch =
+    normalizePlaceName(left.name).length >= 4 &&
+    samePlace(left.name, right.name);
+  const addressesMatch =
+    Boolean(left.address && right.address) && samePlace(left.address, right.address);
+
+  return namesMatch || (addressesMatch && namesMatch);
+}
+
+function mergeNamedRecommendations<T extends NamedPlaceRecommendation>(
+  existing: T,
+  incoming: T
+) {
+  const preferred =
+    isProviderBackedRecommendation(incoming) &&
+    !isProviderBackedRecommendation(existing)
+      ? incoming
+      : existing;
+  const fallback = preferred === existing ? incoming : existing;
+
+  return {
+    ...fallback,
+    ...preferred,
+    poiId: preferred.poiId ?? fallback.poiId,
+    address: preferred.address ?? fallback.address,
+    lngLat: preferred.lngLat ?? fallback.lngLat,
+    evidence: preferred.evidence ?? fallback.evidence,
+  } as T;
+}
+
+function deduplicateNamedRecommendations<T extends NamedPlaceRecommendation>(
+  items: T[]
+) {
+  const deduplicated: T[] = [];
+
+  for (const item of items) {
+    const duplicateIndex = deduplicated.findIndex((existing) =>
+      sameRecommendationIdentity(existing, item)
+    );
+    if (duplicateIndex < 0) {
+      deduplicated.push(item);
+    } else {
+      deduplicated[duplicateIndex] = mergeNamedRecommendations(
+        deduplicated[duplicateIndex],
+        item
+      );
+    }
+  }
+
+  return deduplicated;
+}
+
+export function deduplicateTravelRecommendations(plan: TravelPlan): TravelPlan {
+  return {
+    ...plan,
+    lodging: deduplicateNamedRecommendations(plan.lodging),
+    food: deduplicateNamedRecommendations(plan.food),
+  };
+}
+
+function uniqueStrings(values: readonly string[]) {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
 export function alignTravelPlanAttractionsWithRoute(
   plan: TravelPlan,
   stops: readonly TravelPlanRouteStop[],
-  legs: readonly TravelPlanRouteLeg[]
+  legs: readonly TravelPlanRouteLeg[],
+  prompt?: string
 ): TravelPlan {
   const attractions = deduplicateAttractions(
     plan.attractions.map((attraction) => ({
@@ -1037,17 +1206,54 @@ export function alignTravelPlanAttractionsWithRoute(
     stops
   );
 
+  const requestedNaturalTypes = uniqueStrings([
+    ...(plan.routeCoverage?.requestedNaturalTypes ?? []),
+    ...(prompt ? parseRequestedNaturalTypes(prompt) : []),
+  ]);
+  const plannedNaturalTypes = new Set(
+    attractions
+      .filter(
+        (attraction) =>
+          attraction.category === "natural" &&
+          attraction.routeStatus === "planned"
+      )
+      .flatMap(naturalAttractionTypes)
+  );
+  const availableNaturalTypes = new Set(
+    attractions
+      .filter((attraction) => attraction.category === "natural")
+      .flatMap(naturalAttractionTypes)
+  );
+  const unmetNaturalTypes = requestedNaturalTypes.filter(
+    (type) => !plannedNaturalTypes.has(type)
+  );
+  const coverageNotes = [...(plan.routeCoverage?.coverageNotes ?? [])];
+  for (const type of unmetNaturalTypes) {
+    if (!availableNaturalTypes.has(type)) {
+      coverageNotes.push(
+        `未找到有证据支持的${type}主路线候选，当前以其他自然景观替代，出发前可根据天气和路况重新安排。`
+      );
+    }
+  }
+
+  const routeCoverage: TravelRouteCoverage = {
+    plannedAttractions: attractions
+      .filter((attraction) => attraction.routeStatus === "planned")
+      .map((attraction) => attraction.name),
+    alternativeAttractions: attractions
+      .filter((attraction) => attraction.routeStatus === "alternative")
+      .map((attraction) => attraction.name),
+  };
+  if (requestedNaturalTypes.length > 0) {
+    routeCoverage.requestedNaturalTypes = requestedNaturalTypes;
+    routeCoverage.unmetNaturalTypes = unmetNaturalTypes;
+    routeCoverage.coverageNotes = uniqueStrings(coverageNotes);
+  }
+
   return {
-    ...plan,
+    ...deduplicateTravelRecommendations(plan),
     attractions,
-    routeCoverage: {
-      plannedAttractions: attractions
-        .filter((attraction) => attraction.routeStatus === "planned")
-        .map((attraction) => attraction.name),
-      alternativeAttractions: attractions
-        .filter((attraction) => attraction.routeStatus === "alternative")
-        .map((attraction) => attraction.name),
-    },
+    routeCoverage,
   };
 }
 
@@ -1243,7 +1449,29 @@ const NATURAL_TYPE_PATTERNS = [
   ["viewpoint", /观景台|观景|台地|草原天路|viewpoint|lookout|panorama/],
 ] as const;
 
-function naturalAttractionTypes(attraction: TravelAttraction) {
+const REQUESTED_NATURAL_TYPE_PATTERNS = [
+  ["wetland", /湿地|沼泽|芦苇|wetland|marsh|swamp/],
+  ["lake", /湖泊?|水库|湖边|lake|reservoir/],
+  ["volcanic", /火山|熔岩|火山地质|volcanic|lava/],
+  ["grassland", /草原|草甸|牧场|grassland|steppe|prairie|meadow|pasture/],
+  ["forest", /森林|林地|原始林|森林公园|forest|woods/],
+  ["coast", /海岸|海滨|海岛|海滩|滨海|coast|coastal|island|beach|seaside/],
+  ["river", /河流|河谷|溪流|水系|river|stream|waterway|riverbank/],
+  ["canyon", /峡谷|沟|峪|canyon|gorge/],
+  ["waterfall", /瀑布|飞瀑|waterfall/],
+  ["mountain", /山地|山景|山脉|山峰|mountain|peak|ridge|hill/],
+  ["park", /自然公园|国家公园|植物园|park|garden/],
+  ["viewpoint", /观景台|观景点|viewpoint|lookout|panorama/],
+] as const;
+
+export function parseRequestedNaturalTypes(prompt: string) {
+  const text = prompt.trim().toLowerCase();
+  return REQUESTED_NATURAL_TYPE_PATTERNS.filter(([, pattern]) =>
+    pattern.test(text)
+  ).map(([type]) => type);
+}
+
+function naturalAttractionTypes(attraction: TravelAttraction): string[] {
   const explicitType = attraction.naturalType?.trim();
   const text = [
     explicitType,
@@ -1261,7 +1489,10 @@ function naturalAttractionTypes(attraction: TravelAttraction) {
   return types.length > 0 ? types : (["other"] as const);
 }
 
-export function assertTravelPlanAttractionCoverage(plan: TravelPlan) {
+export function assertTravelPlanAttractionCoverage(
+  plan: TravelPlan,
+  options: { prompt?: string; requirePlannedRequestedTypes?: boolean } = {}
+) {
   const naturalCount = plan.attractions.filter(
     (attraction) => attraction.category === "natural"
   ).length;
@@ -1291,6 +1522,44 @@ export function assertTravelPlanAttractionCoverage(plan: TravelPlan) {
     throw new Error(
       `旅行规划的自然景观至少需要覆盖 ${requiredNaturalTypeCount} 种不同类型（例如湖泊、山地、森林、湿地或草原），当前只有 ${naturalTypes.size} 种（已识别：${detectedTypes}）。请扩大自然景观搜索范围后重试。`
     );
+  }
+
+  if (!options.requirePlannedRequestedTypes) return;
+
+  const requestedNaturalTypes = uniqueStrings([
+    ...(plan.routeCoverage?.requestedNaturalTypes ?? []),
+    ...(options.prompt ? parseRequestedNaturalTypes(options.prompt) : []),
+  ]);
+  if (requestedNaturalTypes.length === 0) return;
+
+  for (const type of requestedNaturalTypes) {
+    const candidates = plan.attractions.filter(
+      (attraction) =>
+        attraction.category === "natural" &&
+        naturalAttractionTypes(attraction).includes(type)
+    );
+    const planned = candidates.some(
+      (attraction) => attraction.routeStatus === "planned"
+    );
+    if (planned) continue;
+
+    if (candidates.length > 0) {
+      throw new Error(
+        `用户明确要求的自然景观类型 ${type} 已有候选，但没有进入主路线。请把对应景点加入 stops/legs；若确实放弃，必须先调整请求或给出可执行替代路线。`
+      );
+    }
+
+    const unmet = plan.routeCoverage?.unmetNaturalTypes?.includes(type);
+    const hasReason = plan.routeCoverage?.coverageNotes?.some((note) =>
+      note.toLowerCase().includes(type.toLowerCase())
+    );
+    const hasAlternative =
+      (plan.routeCoverage?.alternativeAttractions.length ?? 0) > 0;
+    if (!unmet || !hasReason || !hasAlternative) {
+      throw new Error(
+        `用户明确要求的自然景观类型 ${type} 没有可执行覆盖。请补充该类型的检索证据和路线停靠点，或在 routeCoverage 中写明放弃原因并提供备选自然景观。`
+      );
+    }
   }
 }
 

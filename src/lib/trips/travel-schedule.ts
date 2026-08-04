@@ -5,7 +5,7 @@ import type {
   PlannedTripLegInput,
   PlannedTripStopInput,
 } from "@/lib/trips/types";
-import type { TravelPlan } from "@/lib/trips/travel-plan";
+import type { TravelLodging, TravelPlan } from "@/lib/trips/travel-plan";
 
 const DEFAULT_TIME_ZONE = "Asia/Shanghai";
 const DEFAULT_FIRST_DAY_START = { hour: 7, minute: 0 };
@@ -541,6 +541,41 @@ function hasOvernightAccommodation(stop?: PlannedTripStopInput) {
   );
 }
 
+function normalizeAccommodationText(value?: string | null) {
+  return (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/(?:住宿|酒店|宾馆|民宿|客栈|过夜|返(?:回)?驻地|驻地)/g, "")
+    .replace(/[\s（）()【】［］[\]·•,，。:：/\\_\-—]/g, "");
+}
+
+function lodgingMatchesStop(lodging: TravelLodging, stop: PlannedTripStopInput) {
+  const stopText = normalizeAccommodationText(
+    [stop.name, stop.address, stop.notes].filter(Boolean).join(" ")
+  );
+  const lodgingText = normalizeAccommodationText(
+    [lodging.name, lodging.area, lodging.address, lodging.notes, lodging.reason]
+      .filter(Boolean)
+      .join(" ")
+  );
+
+  if (!stopText || !lodgingText) return false;
+  return (
+    lodgingText.includes(stopText) ||
+    stopText.includes(lodgingText) ||
+    (stopText.length >= 3 && lodgingText.includes(stopText.slice(0, 3)))
+  );
+}
+
+function hasPlanAccommodationAtStop(
+  stop: PlannedTripStopInput | undefined,
+  lodging: readonly TravelLodging[]
+) {
+  return Boolean(
+    stop && lodging.some((recommendation) => lodgingMatchesStop(recommendation, stop))
+  );
+}
+
 function isAttractionLikeStop(stop?: PlannedTripStopInput) {
   if (!stop) return false;
 
@@ -568,6 +603,7 @@ function assertCrossDayOvernightContinuity(input: {
   stops: PlannedTripStopInput[];
   legs: PlannedTripLegInput[];
   timezone: string;
+  lodging?: readonly TravelLodging[];
 }) {
   if (input.stops.length < 2 || input.legs.length < 2) return;
 
@@ -586,7 +622,8 @@ function assertCrossDayOvernightContinuity(input: {
       previousArrivalDate &&
       departureDate !== previousArrivalDate &&
       isAttractionLikeStop(previousDestination) &&
-      !hasOvernightAccommodation(previousDestination)
+      !hasOvernightAccommodation(previousDestination) &&
+      !hasPlanAccommodationAtStop(previousDestination, input.lodging ?? [])
     ) {
       throw new Error(
         `旅行路线跨自然日从 ${previousDestination?.name ?? "该景点"} 继续出发，但前一日终点未明确住宿或返城连接。请在该处补充景点附近住宿，或在前一日加入返回城市的连接段后再继续下一日路线。`
@@ -797,6 +834,7 @@ export function assertTravelItinerarySchedule(input: {
   timezone: string;
   stops?: PlannedTripStopInput[];
   legs: PlannedTripLegInput[];
+  lodging?: readonly TravelLodging[];
 }) {
   assertTravelItineraryRouteContinuity({
     stops: input.stops,
@@ -848,6 +886,7 @@ export function assertTravelItinerarySchedule(input: {
     stops: input.stops ?? [],
     legs: input.legs,
     timezone: input.timezone,
+    lodging: input.lodging,
   });
 
   const daylightViolation = findDaylightDrivingViolation(input);
@@ -891,36 +930,8 @@ export function ensureTravelPlanRouteRiskCoverage(
   }
 
   const existingRisks = plan.weather.routeRisks ?? [];
-  const canonicalRoutes = new Map(
-    drivingLegs.map(({ leg, order }) => {
-      const endpoints = [leg.originName?.trim(), leg.destinationName?.trim()].filter(
-        Boolean
-      ) as string[];
-      const route =
-        endpoints.length === 2
-          ? endpoints.join("→")
-          : leg.routeTitle || leg.segmentTitle || `第 ${order} 段自驾`;
-      return [order, route] as const;
-    })
-  );
-  const canonicalRisks = existingRisks.map((risk) => {
-    const canonicalRoute =
-      risk.legOrder === undefined
-        ? undefined
-        : canonicalRoutes.get(risk.legOrder);
-    return canonicalRoute ? { ...risk, route: canonicalRoute } : risk;
-  });
-  const existingOrders = new Set(
-    existingRisks
-      .map((risk) => risk.legOrder)
-      .filter((order): order is number => order !== undefined)
-  );
   const dateRange = prompt ? parseTravelDateRange(prompt) : undefined;
-  const generatedRisks = drivingLegs.flatMap(({ leg, order }) => {
-    if (existingOrders.has(order)) {
-      return [];
-    }
-
+  const routeRisks = drivingLegs.map(({ leg, order }) => {
     const date = leg.latestDepartAt
       ? formatInTimeZone(
           leg.latestDepartAt,
@@ -938,34 +949,30 @@ export function ensureTravelPlanRouteRiskCoverage(
       leg.segmentTitle ||
       `第 ${order} 段自驾`;
 
-    return [
-      {
-        legOrder: order,
-        day,
-        date,
-        route,
-        summary:
-          "该路段未返回独立天气风险，按未知风险处理；当前预报和路况不能覆盖此路段。",
-        risk: "medium" as const,
-        drivingAdvice:
-          "出发前 1 小时刷新天气、路况和道路通行状态，完成刷新前不要按当前路线出发。",
-        action:
-          "按未知风险保守执行；若出现降雨、大风、低能见度或道路管制，延后、改道或取消该段。",
-      },
-    ];
+    const existing = existingRisks.find((risk) => risk.legOrder === order);
+    return {
+      legOrder: order,
+      day,
+      date,
+      route,
+      summary:
+        existing?.summary?.trim() ||
+        "该路段未返回独立天气风险，按未知风险处理；当前预报和路况不能覆盖此路段。",
+      risk: existing?.risk ?? ("medium" as const),
+      drivingAdvice:
+        existing?.drivingAdvice?.trim() ||
+        "出发前 1 小时刷新天气、路况和道路通行状态，完成刷新前不要按当前路线出发。",
+      action:
+        existing?.action?.trim() ||
+        "按未知风险保守执行；若出现降雨、大风、低能见度或道路管制，延后、改道或取消该段。",
+    };
   });
-
-  if (generatedRisks.length === 0) {
-    return plan;
-  }
 
   return {
     ...plan,
     weather: {
       ...plan.weather,
-      routeRisks: [...canonicalRisks, ...generatedRisks].sort(
-        (left, right) => (left.legOrder ?? Number.MAX_SAFE_INTEGER) - (right.legOrder ?? Number.MAX_SAFE_INTEGER)
-      ),
+      routeRisks,
     },
   };
 }

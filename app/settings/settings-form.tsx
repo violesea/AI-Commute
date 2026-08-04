@@ -21,6 +21,8 @@ type SettingsValues = {
   routeChangeThresholdMinutes?: number;
 };
 
+type ModelOption = readonly [string, string];
+
 const routePreferenceOptions = [
   ["balanced", "均衡"],
   ["fastest", "省时间优先"],
@@ -156,11 +158,18 @@ function formatTestNotificationMessage(
   return detail ? `${failurePrefix}：${detail}` : failurePrefix;
 }
 
-export function SettingsForm({ values }: { values: SettingsValues }) {
+export function SettingsForm({
+  modelOptions = PLANNING_MODEL_OPTIONS,
+  values,
+}: {
+  modelOptions?: readonly ModelOption[];
+  values: SettingsValues;
+}) {
   const [status, setStatus] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const initialModel =
-    PLANNING_MODEL_OPTIONS.find(([value]) => value === values.model)?.[0] ??
+    modelOptions.find(([value]) => value === values.model)?.[0] ??
+    modelOptions[0]?.[0] ??
     DEFAULT_PLANNING_MODEL;
   const [model, setModel] = useState<string>(initialModel);
   const [modelTestStatus, setModelTestStatus] = useState("");
@@ -183,7 +192,7 @@ export function SettingsForm({ values }: { values: SettingsValues }) {
   const [placeStatus, setPlaceStatus] = useState("");
   const routeChangeThresholdMinutes = values.routeChangeThresholdMinutes ?? 3;
   const selectedModelLabel =
-    PLANNING_MODEL_OPTIONS.find(([value]) => value === model)?.[1] ?? model;
+    modelOptions.find(([value]) => value === model)?.[1] ?? model;
 
   async function testModelConnection(target: "commute" | "travel") {
     if (testingModel) {
@@ -193,7 +202,7 @@ export function SettingsForm({ values }: { values: SettingsValues }) {
     const targetModel = target === "travel" ? TRAVEL_PLANNING_MODEL : model;
     const targetLabel =
       target === "travel"
-        ? PLANNING_MODEL_OPTIONS.find(([value]) => value === TRAVEL_PLANNING_MODEL)?.[1] ??
+        ? modelOptions.find(([value]) => value === TRAVEL_PLANNING_MODEL)?.[1] ??
           TRAVEL_PLANNING_MODEL
         : selectedModelLabel;
     const setTargetStatus =
@@ -363,7 +372,7 @@ export function SettingsForm({ values }: { values: SettingsValues }) {
               id="model"
               name="model"
               onChange={setModel}
-              options={PLANNING_MODEL_OPTIONS}
+              options={modelOptions}
             />
             <div className="rounded-2xl bg-[#f2f4f6] p-4 text-sm text-on-surface-variant">
               <div className="flex flex-wrap items-center justify-between gap-2">

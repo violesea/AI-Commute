@@ -25,8 +25,8 @@ import {
 } from "@/lib/home/summary";
 import { getTripDisplayStatus } from "@/lib/trips/display-status";
 import {
-  DEFAULT_PLANNING_MODEL,
-  PLANNING_MODEL_OPTIONS,
+  getDefaultPlanningModel,
+  getPlanningModelOptions,
   TRAVEL_PLANNING_MODEL,
 } from "@/lib/agent/model-config";
 
@@ -108,9 +108,9 @@ export default async function HomePage() {
     firstLeg?.selectedCandidate?.totalMinutes ??
     firstLeg?.selectedCandidate?.routeMinutes ??
     null;
-  const commuteModel = settings?.model ?? DEFAULT_PLANNING_MODEL;
+  const commuteModel = settings?.model ?? getDefaultPlanningModel();
   const commuteModelLabel =
-    PLANNING_MODEL_OPTIONS.find(([value]) => value === commuteModel)?.[1] ??
+    getPlanningModelOptions().find(([value]) => value === commuteModel)?.[1] ??
     commuteModel;
 
   return (

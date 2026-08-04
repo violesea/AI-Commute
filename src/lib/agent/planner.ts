@@ -200,15 +200,19 @@ function normalizePrompt(prompt: string) {
   return trimmed;
 }
 
-async function enrichTravelPlanWithLatestWeatherEvidence(
+export async function enrichTravelPlanWithLatestWeatherEvidence(
   plan: TravelPlan,
-  sessionId: string
+  sessionId: string,
+  options: { minCreatedAt?: Date; replaceForecast?: boolean } = {}
 ): Promise<TravelPlan> {
   const latestWeatherCall = await prisma.agentToolCall.findFirst({
     where: {
       agentSessionId: sessionId,
       name: "get_weather_reference",
       status: "completed",
+      ...(options.minCreatedAt
+        ? { createdAt: { gte: options.minCreatedAt } }
+        : {}),
     },
     orderBy: { createdAt: "desc" },
     select: { responseJson: true, createdAt: true },
@@ -264,11 +268,21 @@ async function enrichTravelPlanWithLatestWeatherEvidence(
         .filter(Boolean)
         .sort()
     : [];
+  const responseCity =
+    typeof response.city === "string" && response.city.trim()
+      ? response.city.trim()
+      : plan.weather.city;
+  const responseSummary =
+    typeof response.summary === "string" && response.summary.trim()
+      ? response.summary.trim()
+      : plan.weather.summary;
 
   return {
     ...plan,
     weather: {
       ...plan.weather,
+      city: responseCity,
+      summary: responseSummary,
       source: "高德天气参考",
       observedAt:
         typeof response.observedAt === "string" && response.observedAt.trim()
@@ -277,9 +291,11 @@ async function enrichTravelPlanWithLatestWeatherEvidence(
       forecastAvailableThrough:
         responseForecastDates.at(-1) ?? plan.weather.forecastAvailableThrough,
       forecast:
-        plan.weather.forecast && plan.weather.forecast.length > 0
-          ? plan.weather.forecast
-          : responseForecast,
+        options.replaceForecast && responseForecast.length > 0
+          ? responseForecast
+          : plan.weather.forecast && plan.weather.forecast.length > 0
+            ? plan.weather.forecast
+            : responseForecast,
     },
   };
 }
@@ -287,8 +303,20 @@ async function enrichTravelPlanWithLatestWeatherEvidence(
 function normalizeRecommendationName(value: string) {
   return value
     .toLowerCase()
+    .replace(
+      /(?:住宿|酒店|宾馆|民宿|客栈|餐厅|饭店|馆子|第?\d+天|d\d+)/gi,
+      ""
+    )
     .replace(/[\s·、，,。/（）()]/g, "")
     .trim();
+}
+
+function usablePoiId(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const normalized = value.trim();
+  return /^(?:amap-poi|mock-|0,0)$/i.test(normalized)
+    ? undefined
+    : normalized;
 }
 
 async function enrichTravelPlanWithToolEvidence(
@@ -310,7 +338,13 @@ async function enrichTravelPlanWithToolEvidence(
     orderBy: { createdAt: "desc" },
     select: { responseJson: true, createdAt: true },
   });
-  const poiEvidence: Array<{ name: string; observedAt: string }> = [];
+  const poiEvidence: Array<{
+    id?: string;
+    name: string;
+    address?: string;
+    lngLat?: string;
+    observedAt: string;
+  }> = [];
 
   for (const call of poiCalls) {
     try {
@@ -319,10 +353,20 @@ async function enrichTravelPlanWithToolEvidence(
 
       for (const item of items) {
         if (!item || typeof item !== "object" || Array.isArray(item)) continue;
-        const name = (item as Record<string, unknown>).name;
+        const record = item as Record<string, unknown>;
+        const name = record.name;
         if (typeof name === "string" && name.trim()) {
           poiEvidence.push({
+            id: usablePoiId(record.id),
             name: name.trim(),
+            address:
+              typeof record.address === "string" && record.address.trim()
+                ? record.address.trim()
+                : undefined,
+            lngLat:
+              typeof record.lngLat === "string" && record.lngLat.trim()
+                ? record.lngLat.trim()
+                : undefined,
             observedAt: call.createdAt.toISOString(),
           });
         }
@@ -332,38 +376,105 @@ async function enrichTravelPlanWithToolEvidence(
     }
   }
 
-  function providerEvidenceFor(name: string): TravelRecommendationEvidence | null {
+  function findPoiEvidence(name: string, area?: string) {
     const normalizedName = normalizeRecommendationName(name);
-    if (!normalizedName) return null;
+    const normalizedArea = area ? normalizeRecommendationName(area) : "";
+    if (!normalizedName) return undefined;
 
-    const match = poiEvidence.find((candidate) => {
-      const normalizedCandidate = normalizeRecommendationName(candidate.name);
-      return (
-        normalizedCandidate.length > 1 &&
-        (normalizedName === normalizedCandidate ||
-          normalizedName.includes(normalizedCandidate) ||
-          normalizedCandidate.includes(normalizedName))
-      );
-    });
+    return poiEvidence
+      .map((candidate) => {
+        const normalizedCandidate = normalizeRecommendationName(candidate.name);
+        const normalizedAddress = candidate.address
+          ? normalizeRecommendationName(candidate.address)
+          : "";
+        let score = 0;
+        if (normalizedName === normalizedCandidate) score = 100;
+        else if (
+          normalizedName.length >= 4 &&
+          normalizedCandidate.includes(normalizedName)
+        )
+          score = 80;
+        else if (
+          normalizedCandidate.length >= 4 &&
+          normalizedName.includes(normalizedCandidate)
+        )
+          score = 70;
+
+        if (
+          score > 0 &&
+          normalizedArea &&
+          (normalizedAddress.includes(normalizedArea) ||
+            normalizedCandidate.includes(normalizedArea))
+        ) {
+          score += 10;
+        }
+
+        return { candidate, score };
+      })
+      .filter(({ score }) => score > 0)
+      .sort((left, right) => right.score - left.score)[0]?.candidate;
+  }
+
+  function providerEvidenceFor(
+    name: string,
+    area?: string
+  ): { evidence: TravelRecommendationEvidence; poi: (typeof poiEvidence)[number] } | null {
+    const match = findPoiEvidence(name, area);
     if (!match) return null;
 
     return {
-      source: "amap_poi",
-      status: "provider_reference",
-      label: "高德地点检索参考，仍需核对开放与价格",
-      observedAt: match.observedAt,
+      poi: match,
+      evidence: {
+        source: "amap_poi",
+        status: "provider_reference",
+        label: "高德地点检索参考，仍需核对开放与价格",
+        observedAt: match.observedAt,
+      },
     };
   }
 
-  function addProviderEvidence<T extends { name: string; evidence?: TravelRecommendationEvidence }>(
-    item: T
-  ): T {
+  function addProviderEvidence<
+    T extends {
+      name: string;
+      area?: string;
+      poiId?: string;
+      address?: string;
+      lngLat?: string;
+      evidence?: TravelRecommendationEvidence;
+    }
+  >(item: T): T {
     if (item.evidence && item.evidence.source !== "agent_inference") {
+      if (item.evidence.source !== "amap_poi") return item;
+    }
+
+    const provider = providerEvidenceFor(item.name, item.area);
+    if (!provider) {
+      if (
+        item.evidence?.source === "amap_poi" &&
+        !item.address &&
+        !item.lngLat
+      ) {
+        return {
+          ...item,
+          evidence: {
+            ...item.evidence,
+            status: "needs_verification",
+            label: "地点证据未能匹配到完整 POI，出发前核验名称与位置",
+          },
+        };
+      }
+
       return item;
     }
 
-    const evidence = providerEvidenceFor(item.name);
-    return evidence ? { ...item, evidence } : item;
+    return {
+      ...item,
+      name: provider.poi.name,
+      poiId: provider.poi.id ?? item.poiId,
+      address: provider.poi.address ?? item.address,
+      lngLat: provider.poi.lngLat ?? item.lngLat,
+      evidence: provider.evidence,
+    };
   }
 
   return {
@@ -643,6 +754,9 @@ const travelLodgingSchema = objectParameters(
     name: { type: "string" },
     area: { type: "string" },
     reason: { type: "string" },
+    poiId: { type: "string" },
+    address: { type: "string" },
+    lngLat: { type: "string" },
     budget: { type: "string" },
     notes: { type: "string" },
     evidence: travelRecommendationEvidenceSchema,
@@ -656,6 +770,9 @@ const travelFoodSchema = objectParameters(
     area: { type: "string" },
     mustTry: { type: "string" },
     reason: { type: "string" },
+    poiId: { type: "string" },
+    address: { type: "string" },
+    lngLat: { type: "string" },
     budget: { type: "string" },
     notes: { type: "string" },
     evidence: travelRecommendationEvidenceSchema,
@@ -1614,16 +1731,22 @@ async function normalizeCreateTripInput(
       ? alignTravelPlanAttractionsWithRoute(
           normalizedTravelPlan,
           schedule.stops,
-          schedule.legs
+          schedule.legs,
+          context.prompt
         )
       : normalizedTravelPlan;
 
   if (context.purpose === "travel" && alignedTravelPlan) {
+    assertTravelPlanAttractionCoverage(alignedTravelPlan, {
+      prompt: context.prompt,
+      requirePlannedRequestedTypes: true,
+    });
     assertTravelItinerarySchedule({
       prompt: context.prompt,
       timezone,
       stops: schedule.stops,
       legs: schedule.legs,
+      lodging: alignedTravelPlan.lodging,
     });
   }
 
@@ -1831,16 +1954,22 @@ async function normalizeReplaceRouteInput(
       ? alignTravelPlanAttractionsWithRoute(
           normalizedTravelPlan,
           schedule.stops,
-          schedule.legs
+          schedule.legs,
+          context.prompt
         )
       : normalizedTravelPlan;
 
   if (context.purpose === "travel" && alignedTravelPlan) {
+    assertTravelPlanAttractionCoverage(alignedTravelPlan, {
+      prompt: context.prompt,
+      requirePlannedRequestedTypes: true,
+    });
     assertTravelItinerarySchedule({
       prompt: context.prompt,
       timezone: current.trip.timezone,
       stops: schedule.stops,
       legs: schedule.legs,
+      lodging: alignedTravelPlan.lodging,
     });
   }
 
@@ -2093,7 +2222,8 @@ async function executeToolCall(
       travelPlan = alignTravelPlanAttractionsWithRoute(
         travelPlan,
         current.stops,
-        current.legs
+        current.legs,
+        context.prompt
       );
       travelPlan = alignTravelPlanPitfallsWithSchedule(
         travelPlan,
@@ -2104,7 +2234,10 @@ async function executeToolCall(
     }
 
     if (context.purpose === "travel" && travelPlan) {
-      assertTravelPlanAttractionCoverage(travelPlan);
+      assertTravelPlanAttractionCoverage(travelPlan, {
+        prompt: context.prompt,
+        requirePlannedRequestedTypes: true,
+      });
       assertTravelPlanBudget(travelPlan);
       assertTravelPlanOperationalCompleteness(travelPlan);
     }

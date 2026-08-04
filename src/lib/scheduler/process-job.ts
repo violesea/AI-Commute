@@ -2,6 +2,7 @@ import {
   AgentSessionAlreadyRunningError,
   AgentSessionNotFoundError,
   acceptAgentSessionMessage,
+  enrichTravelPlanWithLatestWeatherEvidence,
   runAcceptedContinuationSession,
   type RunPlanningSessionOptions,
 } from "@/lib/agent/planner";
@@ -24,6 +25,7 @@ import {
 import { sendTelegram } from "@/lib/notifications/telegram";
 import { completeTripMonitoringIfFinished } from "@/lib/trips/monitoring";
 import { replaceReminderSchedule } from "@/lib/trips/route-updates";
+import { parseTravelPlanJson } from "@/lib/trips/travel-plan";
 import {
   expireStaleReminderJobs,
   findDueReminderJobs,
@@ -629,6 +631,53 @@ async function refreshReminderScheduleAfterRouteChange(
   });
 }
 
+async function persistLatestTravelWeather(input: {
+  job: DueReminderJob;
+  sessionId: string;
+  refreshedAfter: Date;
+}) {
+  const weatherCall = await prisma.agentToolCall.findFirst({
+    where: {
+      agentSessionId: input.sessionId,
+      name: "get_weather_reference",
+      status: "completed",
+      createdAt: { gte: input.refreshedAfter },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { id: true },
+  });
+
+  if (!weatherCall) {
+    throw new Error(
+      "天气刷新失败：本次智能体复查没有完成 get_weather_reference，未写回旧天气快照。"
+    );
+  }
+
+  const trip = await prisma.trip.findUnique({
+    where: { id: input.job.tripId },
+    select: { travelPlanJson: true },
+  });
+  const currentPlan = parseTravelPlanJson(trip?.travelPlanJson);
+  if (!currentPlan) {
+    throw new Error("天气刷新失败：当前旅行行程没有可更新的结构化 travelPlan。");
+  }
+
+  const refreshedPlan = await enrichTravelPlanWithLatestWeatherEvidence(
+    currentPlan,
+    input.sessionId,
+    { minCreatedAt: input.refreshedAfter, replaceForecast: true }
+  );
+  await prisma.trip.update({
+    where: { id: input.job.tripId },
+    data: { travelPlanJson: JSON.stringify(refreshedPlan) },
+  });
+
+  return {
+    observedAt: refreshedPlan.weather.observedAt,
+    forecastAvailableThrough: refreshedPlan.weather.forecastAvailableThrough,
+  };
+}
+
 async function processRouteRecheckJob(
   job: DueReminderJob,
   now: Date,
@@ -642,6 +691,7 @@ async function processRouteRecheckJob(
 
   const thresholdMinutes = getRouteChangeThresholdMinutes(job);
   const sessionId = getSessionIdForRecheck(job);
+  const isWeatherRefresh = job.kind === "weather_refresh";
   const before = snapshotLeg(job.leg);
   const recalculation = await prisma.recalculationLog.create({
     data: {
@@ -685,6 +735,14 @@ async function processRouteRecheckJob(
       return "failed";
     }
 
+    const weatherSnapshot = isWeatherRefresh
+      ? await persistLatestTravelWeather({
+          job,
+          sessionId,
+          refreshedAfter: recalculation.createdAt,
+        })
+      : undefined;
+
     const after = await loadCurrentLegSnapshot(job, before?.order);
     const changeMinutes = measureRouteChangeMinutes(before, after);
 
@@ -693,9 +751,16 @@ async function processRouteRecheckJob(
         job,
         status: "completed",
         recalculationId: recalculation.id,
-        summary: `路线复查完成：时间变化 ${changeMinutes.toFixed(
-          1
-        )} 分钟，未超过 ${thresholdMinutes} 分钟阈值。`,
+        summary: [
+          `路线复查完成：时间变化 ${changeMinutes.toFixed(
+            1
+          )} 分钟，未超过 ${thresholdMinutes} 分钟阈值。`,
+          weatherSnapshot
+            ? `天气快照已写回，预报截止 ${weatherSnapshot.forecastAvailableThrough ?? "未知"}。`
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" "),
       });
       return "completed";
     }

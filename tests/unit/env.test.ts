@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import {
+  DEEPSEEK_PLANNING_MODEL_OPTIONS,
+  getPlanningModelOptions,
+} from "@/lib/agent/model-config";
 import { readEnv } from "@/lib/env";
 
 describe("readEnv", () => {
@@ -27,6 +31,17 @@ describe("readEnv", () => {
   it("reads the non-secret model default from the environment", () => {
     expect(readEnv({ OPENAI_MODEL: "deepseek-v4-pro" }).openAiModel).toBe(
       "deepseek-v4-pro"
+    );
+  });
+
+  it("limits the visible model catalog to DeepSeek for the official endpoint", () => {
+    const deepSeekEnv = {
+      OPENAI_BASE_URL: "https://api.deepseek.com/v1",
+    };
+
+    expect(readEnv(deepSeekEnv).openAiModel).toBe("deepseek-v4-flash");
+    expect(getPlanningModelOptions(deepSeekEnv)).toEqual(
+      DEEPSEEK_PLANNING_MODEL_OPTIONS
     );
   });
 

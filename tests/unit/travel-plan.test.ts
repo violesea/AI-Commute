@@ -5,6 +5,7 @@ import {
   assertTravelPlanOperationalCompleteness,
   completeTravelPlanArrayPayload,
   completeTravelPlanTransportPayload,
+  deduplicateTravelRecommendations,
   ensureTravelPlanWeatherCoverage,
   getTravelRouteStats,
   normalizeTravelPlan,
@@ -203,6 +204,132 @@ describe("travel plan normalization", () => {
     expect(aligned.routeCoverage).toEqual({
       plannedAttractions: ["张北草原"],
       alternativeAttractions: [],
+    });
+  });
+
+  it("keeps explicitly requested natural types on the main route", () => {
+    const plan = normalizeTravelPlan({
+      ...sampleTravelPlan,
+      days: 5,
+      attractions: [
+        {
+          name: "达里湖",
+          category: "natural",
+          naturalType: "lake",
+          reason: "湖泊风光",
+        },
+        {
+          name: "锡林河国家湿地公园",
+          category: "natural",
+          naturalType: "wetland",
+          reason: "湿地生态",
+        },
+        {
+          name: "金莲川草原",
+          category: "natural",
+          naturalType: "grassland",
+          reason: "草原花海",
+        },
+        {
+          name: "平顶山",
+          category: "natural",
+          naturalType: "mountain",
+          reason: "山地景观",
+        },
+        { name: "元上都遗址", category: "cultural", reason: "历史遗址" },
+      ],
+    });
+    const stops = [
+      { order: 0, name: "北京", kind: "origin" },
+      { order: 1, name: "达里湖", kind: "destination" },
+      { order: 2, name: "锡林河国家湿地公园", kind: "destination" },
+      { order: 3, name: "金莲川草原", kind: "destination" },
+      { order: 4, name: "平顶山", kind: "destination" },
+      { order: 5, name: "元上都遗址", kind: "destination" },
+    ];
+    const legs = stops.slice(1).map((stop, index) => ({
+      order: index,
+      originName: stops[index].name,
+      destinationName: stop.name,
+      routeMinutes: 60,
+      mode: "driving",
+    }));
+
+    const aligned = alignTravelPlanAttractionsWithRoute(
+      plan,
+      stops,
+      legs,
+      "请安排湖泊、湿地、草原和山地自然景观，并放入主路线"
+    );
+
+    expect(aligned.routeCoverage).toMatchObject({
+      requestedNaturalTypes: ["wetland", "lake", "grassland", "mountain"],
+      unmetNaturalTypes: [],
+    });
+    expect(() =>
+      assertTravelPlanAttractionCoverage(aligned, {
+        prompt: "请安排湖泊、湿地、草原和山地自然景观，并放入主路线",
+        requirePlannedRequestedTypes: true,
+      })
+    ).not.toThrow();
+  });
+
+  it("deduplicates lodging and food by POI identity while preserving provider data", () => {
+    const plan = normalizeTravelPlan({
+      ...sampleTravelPlan,
+      lodging: [
+        {
+          name: "锡林浩特住宿",
+          area: "市区",
+          reason: "AI建议",
+        },
+        {
+          name: "锡林浩特大酒店",
+          area: "市区",
+          reason: "高德检索",
+          poiId: "amap-hotel-1",
+          address: "锡林浩特市中心",
+          lngLat: "116.1003,43.9002",
+          evidence: {
+            source: "amap_poi",
+            status: "provider_reference",
+            label: "高德地点检索参考",
+          },
+        },
+      ],
+      food: [
+        {
+          name: "锡林羊肉馆",
+          mustTry: "手切羊肉",
+          reason: "AI建议",
+          lngLat: "116.1000,43.9000",
+        },
+        {
+          name: "锡林羊肉馆（高德）",
+          mustTry: "手切羊肉",
+          reason: "高德检索",
+          poiId: "amap-food-1",
+          address: "锡林浩特市区",
+          lngLat: "116.1002,43.9001",
+          evidence: {
+            source: "amap_poi",
+            status: "provider_reference",
+            label: "高德地点检索参考",
+          },
+        },
+      ],
+    });
+    const deduplicated = deduplicateTravelRecommendations(plan);
+
+    expect(deduplicated.lodging).toHaveLength(1);
+    expect(deduplicated.lodging[0]).toMatchObject({
+      poiId: "amap-hotel-1",
+      address: "锡林浩特市中心",
+    });
+    expect(deduplicated.food).toHaveLength(1);
+    expect(deduplicated.food[0]).toMatchObject({
+      poiId: "amap-food-1",
+      address: "锡林浩特市区",
     });
   });
 

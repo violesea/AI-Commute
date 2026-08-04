@@ -269,6 +269,7 @@ export async function replaceTripRoute(input: ReplaceTripRouteInput) {
         timezone: trip.timezone,
         stops: orderedStops,
         legs: orderedLegs,
+        lodging: travelPlanForValidation.lodging,
       });
     }
     const finalStopName =
