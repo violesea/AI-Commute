@@ -334,11 +334,11 @@ describe("travel plan normalization", () => {
       { order: 0, name: "北京市", kind: "origin" },
       { order: 1, name: "正蓝旗住宿", kind: "lodging" },
       { order: 2, name: "锡林浩特市区", kind: "lodging" },
-    ]);
+    ], ["北京市", "正蓝旗"]);
 
     expect(withLocations.weather.locations).toEqual([
       expect.objectContaining({ name: "北京市", status: "queried" }),
-      expect.objectContaining({ name: "正蓝旗", status: "refresh_required" }),
+      expect.objectContaining({ name: "正蓝旗", status: "queried" }),
       expect.objectContaining({ name: "锡林浩特市区", status: "refresh_required" }),
     ]);
 

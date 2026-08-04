@@ -206,7 +206,7 @@ export async function enrichTravelPlanWithLatestWeatherEvidence(
   sessionId: string,
   options: { minCreatedAt?: Date; replaceForecast?: boolean } = {}
 ): Promise<TravelPlan> {
-  const latestWeatherCall = await prisma.agentToolCall.findFirst({
+  const weatherCalls = await prisma.agentToolCall.findMany({
     where: {
       agentSessionId: sessionId,
       name: "get_weather_reference",
@@ -218,6 +218,7 @@ export async function enrichTravelPlanWithLatestWeatherEvidence(
     orderBy: { createdAt: "desc" },
     select: { responseJson: true, createdAt: true },
   });
+  const latestWeatherCall = weatherCalls[0];
 
   if (!latestWeatherCall) {
     return plan;
@@ -299,6 +300,49 @@ export async function enrichTravelPlanWithLatestWeatherEvidence(
             : responseForecast,
     },
   };
+}
+
+/**
+ * Returns only cities present in completed provider responses. This is kept
+ * separate from the plan payload so model-authored weather.locations values
+ * cannot become evidence accidentally.
+ */
+export async function loadCompletedWeatherReferenceCities(
+  sessionId: string,
+  options: { minCreatedAt?: Date } = {}
+): Promise<string[]> {
+  const weatherCalls = await prisma.agentToolCall.findMany({
+    where: {
+      agentSessionId: sessionId,
+      name: "get_weather_reference",
+      status: "completed",
+      ...(options.minCreatedAt
+        ? { createdAt: { gte: options.minCreatedAt } }
+        : {}),
+    },
+    orderBy: { createdAt: "asc" },
+    select: { responseJson: true },
+  });
+  const cities: string[] = [];
+
+  for (const call of weatherCalls) {
+    try {
+      const parsed = call.responseJson ? JSON.parse(call.responseJson) : null;
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        !Array.isArray(parsed) &&
+        typeof parsed.city === "string" &&
+        parsed.city.trim()
+      ) {
+        cities.push(parsed.city.trim());
+      }
+    } catch {
+      // Ignore malformed provider records and keep the valid evidence.
+    }
+  }
+
+  return [...new Set(cities)];
 }
 
 function normalizeRecommendationName(value: string) {
@@ -1710,6 +1754,10 @@ async function normalizeCreateTripInput(
           context.sessionId
         )
       : travelPlan;
+  const queriedWeatherLocations =
+    context.purpose === "travel" && travelPlan
+      ? await loadCompletedWeatherReferenceCities(context.sessionId)
+      : [];
   const normalizedTravelPlan =
     context.purpose === "travel" && travelPlan
       ? alignTravelPlanPitfallsWithSchedule(
@@ -1719,7 +1767,8 @@ async function normalizeCreateTripInput(
                 travelPlanWithEvidence!,
                 schedule.dateRange
               ),
-              schedule.stops
+              schedule.stops,
+              queriedWeatherLocations
             ),
             schedule.legs,
             timezone
@@ -1936,6 +1985,10 @@ async function normalizeReplaceRouteInput(
           context.sessionId
         )
       : travelPlan;
+  const queriedWeatherLocations =
+    context.purpose === "travel" && travelPlan
+      ? await loadCompletedWeatherReferenceCities(context.sessionId)
+      : [];
   const normalizedTravelPlan =
     context.purpose === "travel" && travelPlan
       ? alignTravelPlanPitfallsWithSchedule(
@@ -1945,7 +1998,8 @@ async function normalizeReplaceRouteInput(
                 travelPlanWithEvidence!,
                 schedule.dateRange
               ),
-              schedule.stops
+              schedule.stops,
+              queriedWeatherLocations
             ),
             schedule.legs,
             current.trip.timezone
@@ -2226,6 +2280,13 @@ async function executeToolCall(
 
     if (context.purpose === "travel" && travelPlan) {
       const current = await loadCurrentRouteInputs(tripId, context.userId);
+      const queriedWeatherLocations =
+        await loadCompletedWeatherReferenceCities(context.sessionId);
+      travelPlan = ensureTravelPlanWeatherLocations(
+        travelPlan,
+        current.stops,
+        queriedWeatherLocations
+      );
       travelPlan = alignTravelPlanAttractionsWithRoute(
         travelPlan,
         current.stops,

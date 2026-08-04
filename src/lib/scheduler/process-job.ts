@@ -3,6 +3,7 @@ import {
   AgentSessionNotFoundError,
   acceptAgentSessionMessage,
   enrichTravelPlanWithLatestWeatherEvidence,
+  loadCompletedWeatherReferenceCities,
   runAcceptedContinuationSession,
   type RunPlanningSessionOptions,
 } from "@/lib/agent/planner";
@@ -25,7 +26,10 @@ import {
 import { sendTelegram } from "@/lib/notifications/telegram";
 import { completeTripMonitoringIfFinished } from "@/lib/trips/monitoring";
 import { replaceReminderSchedule } from "@/lib/trips/route-updates";
-import { parseTravelPlanJson } from "@/lib/trips/travel-plan";
+import {
+  ensureTravelPlanWeatherLocations,
+  parseTravelPlanJson,
+} from "@/lib/trips/travel-plan";
 import {
   expireStaleReminderJobs,
   findDueReminderJobs,
@@ -655,17 +659,48 @@ async function persistLatestTravelWeather(input: {
 
   const trip = await prisma.trip.findUnique({
     where: { id: input.job.tripId },
-    select: { travelPlanJson: true },
+    select: {
+      travelPlanJson: true,
+      stops: {
+        orderBy: { order: "asc" },
+        select: {
+          name: true,
+          order: true,
+          address: true,
+          lngLat: true,
+          kind: true,
+          notes: true,
+        },
+      },
+    },
   });
-  const currentPlan = parseTravelPlanJson(trip?.travelPlanJson);
+  if (!trip) {
+    throw new Error("天气刷新失败：行程不存在。");
+  }
+  const currentPlan = parseTravelPlanJson(trip.travelPlanJson);
   if (!currentPlan) {
     throw new Error("天气刷新失败：当前旅行行程没有可更新的结构化 travelPlan。");
   }
 
-  const refreshedPlan = await enrichTravelPlanWithLatestWeatherEvidence(
-    currentPlan,
-    input.sessionId,
-    { minCreatedAt: input.refreshedAfter, replaceForecast: true }
+  const refreshedPlanWithWeather =
+    await enrichTravelPlanWithLatestWeatherEvidence(
+      currentPlan,
+      input.sessionId,
+      { minCreatedAt: input.refreshedAfter, replaceForecast: true }
+    );
+  const previousQueriedLocations =
+    currentPlan.weather.locations
+      ?.filter((location) => location.status === "queried")
+      .map((location) => location.name) ?? [];
+  const refreshedPlan = ensureTravelPlanWeatherLocations(
+    refreshedPlanWithWeather,
+    trip.stops,
+    [
+      ...previousQueriedLocations,
+      ...(await loadCompletedWeatherReferenceCities(input.sessionId, {
+        minCreatedAt: input.refreshedAfter,
+      })),
+    ]
   );
   await prisma.trip.update({
     where: { id: input.job.tripId },

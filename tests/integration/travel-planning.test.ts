@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { formatInTimeZone } from "date-fns-tz";
 import { prisma } from "@/lib/db";
 import {
+  loadCompletedWeatherReferenceCities,
   runPlanningSession,
   startPlanningSession,
   stringifyToolResult,
@@ -115,6 +116,53 @@ const travelPlan = {
 describe("travel planning integration", () => {
   beforeAll(async () => {
     await ensureTestDatabase();
+  });
+
+  it("aggregates every completed weather provider city in one session", async () => {
+    const user = await prisma.user.create({
+      data: {
+        email: `travel-weather-cities-${Date.now()}@example.com`,
+        name: "天气证据聚合用户",
+        passwordHash: "hash",
+      },
+    });
+    const session = await startPlanningSession({
+      userId: user.id,
+      purpose: "travel",
+      prompt: "请规划北京到锡林郭勒的自驾旅行。",
+    });
+
+    await prisma.agentToolCall.create({
+      data: {
+        agentSessionId: session.id,
+        name: "get_weather_reference",
+        requestJson: JSON.stringify({ city: "北京" }),
+        responseJson: JSON.stringify({ city: "北京市", summary: "晴" }),
+        status: "completed",
+      },
+    });
+    await prisma.agentToolCall.create({
+      data: {
+        agentSessionId: session.id,
+        name: "get_weather_reference",
+        requestJson: JSON.stringify({ city: "正蓝旗" }),
+        responseJson: JSON.stringify({ city: "正蓝旗", summary: "多云" }),
+        status: "completed",
+      },
+    });
+    await prisma.agentToolCall.create({
+      data: {
+        agentSessionId: session.id,
+        name: "get_weather_reference",
+        requestJson: JSON.stringify({ city: "未完成" }),
+        responseJson: JSON.stringify({ city: "未完成", summary: "失败调用" }),
+        status: "failed",
+      },
+    });
+
+    await expect(
+      loadCompletedWeatherReferenceCities(session.id)
+    ).resolves.toEqual(["北京市", "正蓝旗"]);
   });
 
   it("keeps provider route payloads out of the model context", () => {
