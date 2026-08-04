@@ -288,6 +288,28 @@ export function TravelPlanCard({
                 </p>
               </div>
             ) : null}
+            {plan.routeEvidence ? (
+              <div
+                className={`mt-3 rounded-2xl border px-4 py-3 text-xs leading-5 ${
+                  plan.routeEvidence.estimatedDrivingLegs > 0
+                    ? "border-[#fdba74]/60 bg-[#fff7ed] text-[#7c2d12]"
+                    : "border-[#86efac]/60 bg-[#f0fdf4] text-[#166534]"
+                }`}
+              >
+                <div className="flex items-center gap-2 font-bold">
+                  {plan.routeEvidence.estimatedDrivingLegs > 0 ? (
+                    <TriangleAlert aria-hidden="true" className="size-4" />
+                  ) : null}
+                  路线时长证据
+                </div>
+                <p className="mt-1">
+                  自驾 {plan.routeEvidence.totalDrivingLegs} 段：
+                  {plan.routeEvidence.verifiedDrivingLegs} 段高德路线已匹配，
+                  {plan.routeEvidence.estimatedDrivingLegs} 段模型估算。
+                </p>
+                <p className="mt-1">{plan.routeEvidence.note}</p>
+              </div>
+            ) : null}
           </div>
           <div className="flex shrink-0 items-start gap-2 rounded-2xl bg-[#fff4d6] px-3 py-2 text-[#7a4f00]">
             <CloudSun aria-hidden="true" className="mt-0.5 size-5" />

@@ -1,4 +1,7 @@
-import type { TravelPlan } from "@/lib/trips/travel-plan";
+import type {
+  TravelPlan,
+  TravelRouteLegEvidence,
+} from "@/lib/trips/travel-plan";
 
 export type BufferSource =
   | "agent_inference"
@@ -65,6 +68,7 @@ export type PlannedTripLegInput = {
   segmentDetail?: string;
   segmentSource?: string;
   source?: unknown;
+  routeEvidence?: TravelRouteLegEvidence;
 };
 
 export type CreatePlannedTripInput = {
@@ -79,3 +83,22 @@ export type CreatePlannedTripInput = {
   legs?: PlannedTripLegInput[];
   travelPlan?: TravelPlan;
 };
+
+export function attachRouteEvidenceToSource(
+  source: unknown,
+  routeEvidence?: TravelRouteLegEvidence
+) {
+  if (!routeEvidence) return source;
+
+  if (source && typeof source === "object" && !Array.isArray(source)) {
+    return {
+      ...(source as Record<string, unknown>),
+      routeEvidence,
+    };
+  }
+
+  return {
+    ...(source === undefined ? {} : { modelSource: source }),
+    routeEvidence,
+  };
+}

@@ -285,6 +285,242 @@ describe("travel planning integration", () => {
     });
   });
 
+  it("matches a completed driving route to the same leg endpoints", async () => {
+    const user = await prisma.user.create({
+      data: {
+        email: `travel-route-evidence-${Date.now()}@example.com`,
+        name: "路线证据匹配用户",
+        passwordHash: "hash",
+        settings: {
+          create: {
+            defaultCity: "北京",
+            timezone: "Asia/Shanghai",
+            originName: "北京",
+            originLngLat: "116.4,39.9",
+            routePreference: "balanced",
+          },
+        },
+      },
+    });
+    const session = await startPlanningSession({
+      userId: user.id,
+      purpose: "travel",
+      prompt: "请规划 2026 年 8 月 8 日北京到锡林郭勒的一日自驾旅行。",
+    });
+    const chatClient: AgentChatClient = {
+      async complete() {
+        return {
+          message: {
+            role: "assistant",
+            content: "已查询驾车路线并创建行程。",
+            toolCalls: [
+              {
+                id: "route-evidence-driving",
+                name: "get_driving_route",
+                arguments: {
+                  origin: "116.4,39.9",
+                  destination: "116.5,42.0",
+                  city: "北京",
+                  cityd: "锡林郭勒",
+                },
+              },
+              {
+                id: "route-evidence-create",
+                name: "create_trip",
+                arguments: {
+                  title: "北京到锡林郭勒",
+                  timezone: "Asia/Shanghai",
+                  finalStopName: "锡林郭勒",
+                  stops: [
+                    {
+                      order: 0,
+                      name: "北京",
+                      kind: "origin",
+                      lngLat: "116.4,39.9",
+                    },
+                    {
+                      order: 1,
+                      name: "锡林郭勒",
+                      kind: "destination",
+                      lngLat: "116.5,42.0",
+                    },
+                  ],
+                  legs: [
+                    {
+                      order: 0,
+                      originName: "北京",
+                      originLngLat: "116.4,39.9",
+                      destinationName: "锡林郭勒",
+                      destinationLngLat: "116.5,42.0",
+                      routeMinutes: 90,
+                      totalMinutes: 90,
+                      bufferComponents: [],
+                      mode: "driving",
+                      segmentTitle: "D1·去程",
+                    },
+                  ],
+                  travelPlan,
+                },
+              },
+            ],
+          },
+        };
+      },
+    };
+
+    const result = await runPlanningSession(session.id, {
+      amapClient: createMockAmapClient(),
+      chatClient,
+    });
+
+    expect(result.status).toBe("completed");
+    const persisted = await prisma.trip.findUniqueOrThrow({
+      where: { id: result.tripId! },
+      include: {
+        legs: {
+          orderBy: { order: "asc" },
+          include: { selectedCandidate: true },
+        },
+      },
+    });
+    const persistedPlan = JSON.parse(persisted.travelPlanJson ?? "{}");
+    const source = JSON.parse(
+      persisted.legs[0]?.selectedCandidate?.sourceJson ?? "{}"
+    );
+
+    expect(persisted.legs[0]?.selectedCandidate?.routeMinutes).toBe(36);
+    expect(persistedPlan.routeEvidence).toMatchObject({
+      totalDrivingLegs: 1,
+      verifiedDrivingLegs: 1,
+      estimatedDrivingLegs: 0,
+      safetyMarginMinutes: 0,
+    });
+    expect(source.routeEvidence).toMatchObject({
+      source: "amap_route",
+      status: "provider_verified",
+      durationMinutes: 36,
+      modelDurationMinutes: 90,
+    });
+  });
+
+  it("adds a safety margin when a driving leg has no route evidence", async () => {
+    const user = await prisma.user.create({
+      data: {
+        email: `travel-route-estimate-${Date.now()}@example.com`,
+        name: "路线估算告警用户",
+        passwordHash: "hash",
+        settings: {
+          create: {
+            defaultCity: "北京",
+            timezone: "Asia/Shanghai",
+            originName: "北京",
+            originLngLat: "116.4,39.9",
+            routePreference: "balanced",
+          },
+        },
+      },
+    });
+    const session = await startPlanningSession({
+      userId: user.id,
+      purpose: "travel",
+      prompt: "请规划 2026 年 8 月 8 日北京到锡林郭勒的一日自驾旅行。",
+    });
+    const chatClient: AgentChatClient = {
+      async complete() {
+        return {
+          message: {
+            role: "assistant",
+            content: "根据已有路线信息创建行程。",
+            toolCalls: [
+              {
+                id: "route-estimate-create",
+                name: "create_trip",
+                arguments: {
+                  title: "北京到锡林郭勒",
+                  timezone: "Asia/Shanghai",
+                  finalStopName: "锡林郭勒",
+                  stops: [
+                    {
+                      order: 0,
+                      name: "北京",
+                      kind: "origin",
+                      lngLat: "116.4,39.9",
+                    },
+                    {
+                      order: 1,
+                      name: "锡林郭勒",
+                      kind: "destination",
+                      lngLat: "116.5,42.0",
+                    },
+                  ],
+                  legs: [
+                    {
+                      order: 0,
+                      originName: "北京",
+                      originLngLat: "116.4,39.9",
+                      destinationName: "锡林郭勒",
+                      destinationLngLat: "116.5,42.0",
+                      routeMinutes: 90,
+                      totalMinutes: 90,
+                      bufferComponents: [],
+                      mode: "driving",
+                      segmentTitle: "D1·去程",
+                    },
+                  ],
+                  travelPlan,
+                },
+              },
+            ],
+          },
+        };
+      },
+    };
+
+    const result = await runPlanningSession(session.id, {
+      amapClient: createMockAmapClient(),
+      chatClient,
+    });
+
+    expect(result.status).toBe("completed");
+    const persisted = await prisma.trip.findUniqueOrThrow({
+      where: { id: result.tripId! },
+      include: {
+        legs: {
+          orderBy: { order: "asc" },
+          include: { selectedCandidate: true, bufferComponents: true },
+        },
+      },
+    });
+    const persistedPlan = JSON.parse(persisted.travelPlanJson ?? "{}");
+    const source = JSON.parse(
+      persisted.legs[0]?.selectedCandidate?.sourceJson ?? "{}"
+    );
+
+    expect(persisted.legs[0]?.selectedCandidate?.routeMinutes).toBe(90);
+    expect(persisted.legs[0]?.selectedCandidate?.totalMinutes).toBe(105);
+    expect(persisted.legs[0]?.bufferComponents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          category: "route_evidence",
+          minutes: 15,
+        }),
+      ])
+    );
+    expect(persistedPlan.routeEvidence).toMatchObject({
+      totalDrivingLegs: 1,
+      verifiedDrivingLegs: 0,
+      estimatedDrivingLegs: 1,
+      safetyMarginMinutes: 15,
+    });
+    expect(source.routeEvidence).toMatchObject({
+      source: "agent_estimate",
+      status: "estimated",
+      durationMinutes: 90,
+      modelDurationMinutes: 90,
+      safetyMarginMinutes: 15,
+    });
+  });
+
   it("persists recommendation arrays when the model flattens them beside travelPlan", async () => {
     const user = await prisma.user.create({
       data: {
@@ -599,9 +835,9 @@ describe("travel planning integration", () => {
         formatInTimeZone(leg.targetArriveAt!, "Asia/Shanghai", "yyyy-MM-dd HH:mm"),
       ])
     ).toEqual([
-      ["2026-08-08 07:00", "2026-08-08 13:04"],
-      ["2026-08-08 13:04", "2026-08-08 13:54"],
-      ["2026-08-09 08:00", "2026-08-09 10:54"],
+      ["2026-08-08 07:00", "2026-08-08 13:09"],
+      ["2026-08-08 13:09", "2026-08-08 14:04"],
+      ["2026-08-09 08:00", "2026-08-09 11:03"],
       ["2026-08-11 06:30", "2026-08-11 17:30"],
     ]);
     const weatherJobs = persisted.reminderJobs.filter(
@@ -622,6 +858,11 @@ describe("travel planning integration", () => {
     ).toEqual([1, 24, 72]);
     expect(JSON.parse(persisted.travelPlanJson ?? "{}")).toMatchObject({
       budget: { total: "¥3,000-4,500/车" },
+      routeEvidence: {
+        estimatedDrivingLegs: 4,
+        verifiedDrivingLegs: 0,
+        safetyMarginMinutes: 129,
+      },
       pitfalls: expect.arrayContaining([
         expect.objectContaining({ title: "单日驾驶强度偏高", severity: "high" }),
       ]),

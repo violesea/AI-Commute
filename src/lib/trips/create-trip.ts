@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { normalizeBufferComponents } from "@/lib/trips/buffers";
 import { buildReminderSchedule } from "@/lib/trips/reminders";
 import { normalizeRouteTitle } from "@/lib/trips/title";
+import { attachRouteEvidenceToSource } from "@/lib/trips/types";
 import type {
   BufferComponentInput,
   CreatePlannedTripInput,
@@ -235,7 +236,9 @@ export async function createPlannedTrip(input: CreatePlannedTripInput) {
           rationale:
             legInput.routeRationale ??
             "已选为该路段的初始监控路线。",
-          sourceJson: serialize(legInput.source),
+          sourceJson: serialize(
+            attachRouteEvidenceToSource(legInput.source, legInput.routeEvidence)
+          ),
         },
       });
 
@@ -254,7 +257,9 @@ export async function createPlannedTrip(input: CreatePlannedTripInput) {
           detail: legInput.segmentDetail,
           minutes: routeMinutes,
           source: legInput.segmentSource ?? "agent",
-          rawJson: serialize(legInput.source),
+          rawJson: serialize(
+            attachRouteEvidenceToSource(legInput.source, legInput.routeEvidence)
+          ),
         },
       });
 

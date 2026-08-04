@@ -28,6 +28,27 @@ export type TravelRouteCoverage = {
   coverageNotes?: string[];
 };
 
+export type TravelRouteLegEvidence = {
+  source: "amap_route" | "agent_estimate";
+  status: "provider_verified" | "estimated";
+  durationMinutes: number;
+  modelDurationMinutes?: number;
+  safetyMarginMinutes: number;
+  observedAt?: string;
+  summary: string;
+  note: string;
+  origin?: string;
+  destination?: string;
+};
+
+export type TravelRouteEvidenceSummary = {
+  totalDrivingLegs: number;
+  verifiedDrivingLegs: number;
+  estimatedDrivingLegs: number;
+  safetyMarginMinutes: number;
+  note: string;
+};
+
 export type TravelRecommendationEvidence = {
   source: TravelRecommendationSource;
   status: TravelRecommendationVerification;
@@ -157,6 +178,7 @@ export type TravelPlan = {
   summary: string;
   days?: number;
   routeCoverage?: TravelRouteCoverage;
+  routeEvidence?: TravelRouteEvidenceSummary;
   weather: TravelPlanWeather;
   transport: TravelTransport;
   budget?: TravelBudget;
@@ -295,6 +317,36 @@ export function getTravelRouteStats(
     dailyDrivingMinutes: [...daily.values()].sort((left, right) =>
       left.date.localeCompare(right.date)
     ),
+  };
+}
+
+export function summarizeTravelRouteEvidence(
+  legs: readonly {
+    mode?: string | null;
+    routeEvidence?: TravelRouteLegEvidence;
+  }[]
+): TravelRouteEvidenceSummary | undefined {
+  const drivingLegs = legs.filter((leg) => isDrivingMode(leg.mode));
+  if (drivingLegs.length === 0) return undefined;
+
+  const verifiedDrivingLegs = drivingLegs.filter(
+    (leg) => leg.routeEvidence?.status === "provider_verified"
+  ).length;
+  const estimatedDrivingLegs = drivingLegs.length - verifiedDrivingLegs;
+  const safetyMarginMinutes = drivingLegs.reduce(
+    (total, leg) => total + Math.max(0, Math.round(leg.routeEvidence?.safetyMarginMinutes ?? 0)),
+    0
+  );
+
+  return {
+    totalDrivingLegs: drivingLegs.length,
+    verifiedDrivingLegs,
+    estimatedDrivingLegs,
+    safetyMarginMinutes,
+    note:
+      estimatedDrivingLegs > 0
+        ? `有 ${estimatedDrivingLegs} 段自驾未匹配到同起终点的高德路线，已加入 ${safetyMarginMinutes} 分钟安全余量；油费、过路费和出发时间需按临期地图重新核验。`
+        : "每段自驾均匹配到同起终点的高德路线查询；出发前仍需刷新实时路况、天气和道路管制。",
   };
 }
 
@@ -720,6 +772,9 @@ export function normalizeTravelPlan(value: unknown): TravelPlan {
   const routeCoverageRecord = isRecord(record.routeCoverage)
     ? record.routeCoverage
     : undefined;
+  const routeEvidenceRecord = isRecord(record.routeEvidence)
+    ? record.routeEvidence
+    : undefined;
   const weather = readJsonRecord(record.weather, "travelPlan.weather");
   const transport = readJsonRecord(record.transport, "travelPlan.transport");
   const recommended = readText(
@@ -792,6 +847,25 @@ export function normalizeTravelPlan(value: unknown): TravelPlan {
             "coverageNotes",
             "travelPlan.routeCoverage"
           ),
+        }
+      : undefined,
+    routeEvidence: routeEvidenceRecord
+      ? {
+          totalDrivingLegs:
+            readOptionalNumber(routeEvidenceRecord, "totalDrivingLegs") ?? 0,
+          verifiedDrivingLegs:
+            readOptionalNumber(routeEvidenceRecord, "verifiedDrivingLegs") ?? 0,
+          estimatedDrivingLegs:
+            readOptionalNumber(routeEvidenceRecord, "estimatedDrivingLegs") ?? 0,
+          safetyMarginMinutes:
+            readOptionalNumber(routeEvidenceRecord, "safetyMarginMinutes") ?? 0,
+          note:
+            readText(
+              routeEvidenceRecord,
+              "note",
+              "travelPlan.routeEvidence",
+              false
+            ) ?? "路线时长按已记录的路段证据核对。",
         }
       : undefined,
     weather: {

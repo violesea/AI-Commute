@@ -56,8 +56,10 @@ import {
   ensureTravelPlanWeatherLocations,
   normalizeTravelPlan,
   parseTravelPlanJson,
+  summarizeTravelRouteEvidence,
   type TravelPlan,
   type TravelRecommendationEvidence,
+  type TravelRouteLegEvidence,
   type TravelTransportEvidence,
   type TravelWeatherForecast,
 } from "@/lib/trips/travel-plan";
@@ -1541,6 +1543,37 @@ function normalizeStop(value: unknown, timezone?: string): PlannedTripStopInput 
   };
 }
 
+function normalizeRouteEvidence(value: unknown): TravelRouteLegEvidence | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const durationMinutes = Number(record.durationMinutes);
+  if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) {
+    return undefined;
+  }
+
+  const source = record.source === "amap_route" ? "amap_route" : "agent_estimate";
+  const status =
+    record.status === "provider_verified" ? "provider_verified" : "estimated";
+  return {
+    source,
+    status,
+    durationMinutes: Math.round(durationMinutes),
+    modelDurationMinutes:
+      record.modelDurationMinutes === undefined
+        ? undefined
+        : Number(record.modelDurationMinutes),
+    safetyMarginMinutes: Math.max(0, Math.round(Number(record.safetyMarginMinutes) || 0)),
+    observedAt: readOptionalString(record, "observedAt"),
+    summary: readOptionalString(record, "summary") ?? "路线时长证据",
+    note: readOptionalString(record, "note") ?? "出发前重新核验路线。",
+    origin: readOptionalString(record, "origin"),
+    destination: readOptionalString(record, "destination"),
+  };
+}
+
 function normalizeLeg(value: unknown, timezone?: string): PlannedTripLegInput {
   const leg = requireObject(value, "legs[]");
   return {
@@ -1568,11 +1601,12 @@ function normalizeLeg(value: unknown, timezone?: string): PlannedTripLegInput {
     segmentDetail: readOptionalString(leg, "segmentDetail"),
     segmentSource: readOptionalString(leg, "segmentSource"),
     source: leg.source,
+    routeEvidence: normalizeRouteEvidence(leg.routeEvidence),
   };
 }
 
 function isTravelDrivingLeg(leg: PlannedTripLegInput) {
-  return /driving|驾车|自驾/i.test(
+  return /driving|drive|car|驾车|自驾|开车|驾驶/i.test(
     [leg.mode, leg.routeTitle, leg.segmentTitle, leg.segmentDetail]
       .filter(Boolean)
       .join(" ")
@@ -1652,6 +1686,281 @@ async function loadTravelTransportEvidence(sessionId: string) {
     : undefined;
 }
 
+type CompletedDrivingRouteEvidence = {
+  origin?: string;
+  destination?: string;
+  requestedOrigin?: string;
+  requestedDestination?: string;
+  durationMinutes: number;
+  summary: string;
+  observedAt: string;
+};
+
+function parseRecordJson(value: string | null | undefined) {
+  if (!value) return {} as Record<string, unknown>;
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {} as Record<string, unknown>;
+  }
+}
+
+function optionalRecordString(record: Record<string, unknown>, ...keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+
+  return undefined;
+}
+
+async function loadTravelDrivingRouteEvidence(
+  sessionId: string
+): Promise<CompletedDrivingRouteEvidence[]> {
+  const calls = await prisma.agentToolCall.findMany({
+    where: {
+      agentSessionId: sessionId,
+      name: "get_driving_route",
+      status: "completed",
+    },
+    orderBy: { createdAt: "asc" },
+    select: { requestJson: true, responseJson: true, createdAt: true },
+  });
+
+  return calls.flatMap((call) => {
+    const request = parseRecordJson(call.requestJson);
+    const response = parseRecordJson(call.responseJson);
+    const durationMinutes = Number(response.durationMinutes);
+    const summary = optionalRecordString(response, "summary");
+    if (!Number.isFinite(durationMinutes) || durationMinutes <= 0 || !summary) {
+      return [];
+    }
+
+    return [
+      {
+        origin:
+          optionalRecordString(response, "origin", "resolvedOrigin") ??
+          optionalRecordString(request, "origin"),
+        destination:
+          optionalRecordString(response, "destination", "resolvedDestination") ??
+          optionalRecordString(request, "destination"),
+        requestedOrigin:
+          optionalRecordString(response, "requestedOrigin") ??
+          optionalRecordString(request, "origin"),
+        requestedDestination:
+          optionalRecordString(response, "requestedDestination") ??
+          optionalRecordString(request, "destination"),
+        durationMinutes: Math.round(durationMinutes),
+        summary,
+        observedAt: call.createdAt.toISOString(),
+      },
+    ];
+  });
+}
+
+function normalizeRoutePlace(value?: string | null) {
+  return (value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s（）()【】［］[\]·•,，。:：/\\_\-—→到至]/g, "");
+}
+
+function routeCoordinate(value?: string | null) {
+  const normalized = value ? normalizeLngLat(value) : null;
+  if (!normalized) return undefined;
+  return normalized.split(",").map(Number) as [number, number];
+}
+
+function sameRouteEndpoint(
+  legName: string | undefined,
+  legLngLat: string | undefined,
+  candidateName: string | undefined,
+  candidateLngLat: string | undefined
+) {
+  const left = routeCoordinate(legLngLat);
+  const right = routeCoordinate(candidateLngLat);
+  if (left && right) {
+    return Math.abs(left[0] - right[0]) < 0.01 && Math.abs(left[1] - right[1]) < 0.01;
+  }
+
+  const normalizedLeft = normalizeRoutePlace(legName);
+  const normalizedRight = normalizeRoutePlace(candidateName);
+  if (!normalizedLeft || !normalizedRight) return false;
+  return (
+    normalizedLeft === normalizedRight ||
+    (Math.min(normalizedLeft.length, normalizedRight.length) >= 3 &&
+      (normalizedLeft.includes(normalizedRight) ||
+        normalizedRight.includes(normalizedLeft)))
+  );
+}
+
+function routeEvidenceMatches(
+  leg: PlannedTripLegInput,
+  evidence: CompletedDrivingRouteEvidence
+) {
+  const originMatches = sameRouteEndpoint(
+    leg.originName,
+    leg.originLngLat,
+    evidence.requestedOrigin,
+    evidence.origin
+  );
+  const destinationMatches = sameRouteEndpoint(
+    leg.destinationName,
+    leg.destinationLngLat,
+    evidence.requestedDestination,
+    evidence.destination
+  );
+
+  return originMatches && destinationMatches;
+}
+
+function estimatedRouteSafetyMargin(routeMinutes: number) {
+  return Math.max(15, Math.min(45, Math.ceil(Math.max(1, routeMinutes) * 0.15)));
+}
+
+function sourceWithRouteEvidence(
+  source: unknown,
+  routeEvidence: TravelRouteLegEvidence
+) {
+  if (source && typeof source === "object" && !Array.isArray(source)) {
+    return { ...(source as Record<string, unknown>), routeEvidence };
+  }
+
+  return {
+    ...(source === undefined ? {} : { modelSource: source }),
+    routeEvidence,
+  };
+}
+
+function legBufferMinutes(leg: PlannedTripLegInput) {
+  return Math.max(
+    0,
+    Math.round(
+      leg.bufferMinutes ??
+        (leg.bufferComponents ?? []).reduce(
+          (total, component) => total + Math.max(0, Math.round(component.minutes)),
+          0
+        )
+    )
+  );
+}
+
+async function annotateTravelRouteEvidence(
+  legs: PlannedTripLegInput[],
+  sessionId: string
+) {
+  const evidence = await loadTravelDrivingRouteEvidence(sessionId);
+  const usedEvidence = new Set<number>();
+
+  const annotatedLegs = legs.map((leg) => {
+    if (!isTravelDrivingLeg(leg) || leg.routeMinutes <= 0) return leg;
+
+    const matchIndex = evidence.findIndex(
+      (candidate, index) =>
+        !usedEvidence.has(index) && routeEvidenceMatches(leg, candidate)
+    );
+    const bufferMinutes = legBufferMinutes(leg);
+
+    if (matchIndex >= 0) {
+      usedEvidence.add(matchIndex);
+      const matched = evidence[matchIndex];
+      const routeEvidence: TravelRouteLegEvidence = {
+        source: "amap_route",
+        status: "provider_verified",
+        durationMinutes: matched.durationMinutes,
+        modelDurationMinutes: Math.round(leg.routeMinutes),
+        safetyMarginMinutes: 0,
+        observedAt: matched.observedAt,
+        summary: matched.summary,
+        note: "已匹配同一起终点的高德驾车路线；出发前仍需刷新实时路况和道路管制。",
+        origin: matched.origin,
+        destination: matched.destination,
+      };
+
+      const routeMinutes = matched.durationMinutes;
+      return {
+        ...leg,
+        routeMinutes,
+        totalMinutes: Math.max(
+          routeMinutes + bufferMinutes,
+          Math.round(leg.totalMinutes ?? 0)
+        ),
+        routeEvidence,
+        source: sourceWithRouteEvidence(leg.source, routeEvidence),
+      };
+    }
+
+    const modelDurationMinutes = Math.max(0, Math.round(leg.routeMinutes));
+    const safetyMarginMinutes = estimatedRouteSafetyMargin(modelDurationMinutes);
+    const routeMinutes = modelDurationMinutes;
+    const routeEvidence: TravelRouteLegEvidence = {
+      source: "agent_estimate",
+      status: "estimated",
+      durationMinutes: routeMinutes,
+      modelDurationMinutes,
+      safetyMarginMinutes,
+      summary: `模型估算约 ${modelDurationMinutes} 分钟，已加入 ${safetyMarginMinutes} 分钟安全余量`,
+      note: "本段没有匹配到同一起终点的高德驾车路线；详情页、油费/过路费和出发时间均需出发前用地图重新核验。",
+    };
+
+    const safetyMarginComponent: BufferComponentInput = {
+      category: "route_evidence",
+      label: "未验证路线安全余量",
+      minutes: safetyMarginMinutes,
+      reason:
+        "该段没有匹配到同一起终点的高德路线，先为模型估算保留安全余量；出发前应使用地图实测替换。",
+      source: "agent_inference",
+    };
+    const bufferComponents = [
+      ...(leg.bufferComponents ?? []),
+      safetyMarginComponent,
+    ];
+    const adjustedBufferMinutes = bufferMinutes + safetyMarginMinutes;
+
+    return {
+      ...leg,
+      bufferComponents,
+      bufferMinutes: adjustedBufferMinutes,
+      routeMinutes,
+      totalMinutes: Math.max(
+        routeMinutes + adjustedBufferMinutes,
+        Math.round(leg.totalMinutes ?? 0)
+      ),
+      routeEvidence,
+      source: sourceWithRouteEvidence(leg.source, routeEvidence),
+    };
+  });
+
+  return {
+    legs: annotatedLegs,
+    evidence: summarizeTravelRouteEvidence(annotatedLegs),
+  };
+}
+
+function attachRouteEvidenceSummary(
+  plan: TravelPlan,
+  summary: ReturnType<typeof summarizeTravelRouteEvidence>
+) {
+  if (!summary) return plan;
+
+  const existingAssumptions = plan.budget?.assumptions?.trim();
+  const assumptions = [existingAssumptions, summary.note]
+    .filter(Boolean)
+    .join("；");
+
+  return {
+    ...plan,
+    routeEvidence: summary,
+    budget: plan.budget
+      ? { ...plan.budget, assumptions }
+      : plan.budget,
+  };
+}
+
 async function normalizeTravelPlanForContext(
   value: unknown,
   context: ToolExecutionContext
@@ -1711,9 +2020,17 @@ async function normalizeCreateTripInput(
   const stops = readArray(args, "stops").map((stop) =>
     normalizeStop(stop, timezone)
   );
-  const legs = readArray(args, "legs").map((leg) =>
+  let legs = readArray(args, "legs").map((leg) =>
     normalizeLeg(leg, timezone)
   );
+  if (context.purpose === "travel" && travelPlan) {
+    const routeEvidence = await annotateTravelRouteEvidence(
+      legs,
+      context.sessionId
+    );
+    legs = routeEvidence.legs;
+    travelPlan = attachRouteEvidenceSummary(travelPlan, routeEvidence.evidence);
+  }
   const initialTargetArriveAt = readOptionalDate(
     args,
     "targetArriveAt",
@@ -1881,31 +2198,38 @@ async function loadCurrentRouteInputs(tripId: string, userId: string) {
       kind: stop.kind,
       notes: stop.notes ?? undefined,
     })),
-    legs: trip.legs.map((leg) => ({
-      order: leg.order,
-      originName: leg.originName,
-      originLngLat: leg.originLngLat,
-      destinationName: leg.destinationName,
-      destinationLngLat: leg.destinationLngLat ?? undefined,
-      routeMinutes: leg.selectedCandidate?.routeMinutes ?? 30,
-      bufferMinutes: leg.selectedCandidate?.bufferMinutes ?? undefined,
-      totalMinutes: leg.selectedCandidate?.totalMinutes ?? undefined,
-      latestDepartAt: leg.latestDepartAt ?? undefined,
-      targetArriveAt: leg.targetArriveAt ?? undefined,
-      mode: leg.selectedCandidate?.mode ?? undefined,
-      routeTitle: leg.selectedCandidate?.title ?? undefined,
-      routeRationale: leg.selectedCandidate?.rationale ?? undefined,
-      segmentTitle: leg.routeSegments[0]?.title,
-      segmentDetail: leg.routeSegments[0]?.detail ?? undefined,
-      segmentSource: leg.routeSegments[0]?.source,
-      bufferComponents: leg.bufferComponents.map((component) => ({
-        category: component.category,
-        label: component.label,
-        minutes: component.minutes,
-        reason: component.reason,
-        source: component.source as BufferComponentInput["source"],
-      })),
-    })),
+    legs: trip.legs.map((leg) => {
+      const persistedSource = parseRecordJson(
+        leg.selectedCandidate?.sourceJson
+      );
+      return {
+        order: leg.order,
+        originName: leg.originName,
+        originLngLat: leg.originLngLat,
+        destinationName: leg.destinationName,
+        destinationLngLat: leg.destinationLngLat ?? undefined,
+        routeMinutes: leg.selectedCandidate?.routeMinutes ?? 30,
+        bufferMinutes: leg.selectedCandidate?.bufferMinutes ?? undefined,
+        totalMinutes: leg.selectedCandidate?.totalMinutes ?? undefined,
+        latestDepartAt: leg.latestDepartAt ?? undefined,
+        targetArriveAt: leg.targetArriveAt ?? undefined,
+        mode: leg.selectedCandidate?.mode ?? undefined,
+        routeTitle: leg.selectedCandidate?.title ?? undefined,
+        routeRationale: leg.selectedCandidate?.rationale ?? undefined,
+        segmentTitle: leg.routeSegments[0]?.title,
+        segmentDetail: leg.routeSegments[0]?.detail ?? undefined,
+        segmentSource: leg.routeSegments[0]?.source,
+        source: persistedSource,
+        routeEvidence: normalizeRouteEvidence(persistedSource.routeEvidence),
+        bufferComponents: leg.bufferComponents.map((component) => ({
+          category: component.category,
+          label: component.label,
+          minutes: component.minutes,
+          reason: component.reason,
+          source: component.source as BufferComponentInput["source"],
+        })),
+      };
+    }),
   };
 }
 
@@ -1921,7 +2245,7 @@ async function normalizeReplaceRouteInput(
   const stops = stopArgs
     ? stopArgs.map((stop) => normalizeStop(stop, timezone))
     : current.stops;
-  const legs = legArgs
+  let legs = legArgs
     ? legArgs.map((leg) => normalizeLeg(leg, timezone))
     : current.legs;
   let travelPlan =
@@ -1931,6 +2255,15 @@ async function normalizeReplaceRouteInput(
           completeTravelPlanArgument(args),
           context
         );
+
+  if (context.purpose === "travel" && travelPlan && legArgs) {
+    const routeEvidence = await annotateTravelRouteEvidence(
+      legs,
+      context.sessionId
+    );
+    legs = routeEvidence.legs;
+    travelPlan = attachRouteEvidenceSummary(travelPlan, routeEvidence.evidence);
+  }
 
   if (context.purpose === "travel" && travelPlan) {
     assertTravelPlanAttractionCoverage(travelPlan);
@@ -2256,7 +2589,14 @@ async function executeToolCall(
           }),
         };
 
-        return route(resolvedRequest);
+        const result = await route(resolvedRequest);
+        return {
+          ...result,
+          origin: resolvedRequest.origin,
+          destination: resolvedRequest.destination,
+          requestedOrigin: request.origin,
+          requestedDestination: request.destination,
+        };
       },
     });
   }

@@ -3,6 +3,7 @@ import { normalizeBufferComponents } from "@/lib/trips/buffers";
 export { cancelTripMonitoring } from "@/lib/trips/monitoring";
 import { buildReminderSchedule } from "@/lib/trips/reminders";
 import { normalizeRouteTitle } from "@/lib/trips/title";
+import { attachRouteEvidenceToSource } from "@/lib/trips/types";
 import type {
   BufferComponentInput,
   PlannedTripLegInput,
@@ -393,7 +394,9 @@ export async function replaceTripRoute(input: ReplaceTripRouteInput) {
           rationale:
             legInput.routeRationale ??
             "已选为该路段的更新后监控路线。",
-          sourceJson: serialize(legInput.source),
+          sourceJson: serialize(
+            attachRouteEvidenceToSource(legInput.source, legInput.routeEvidence)
+          ),
         },
       });
 
@@ -412,7 +415,9 @@ export async function replaceTripRoute(input: ReplaceTripRouteInput) {
           detail: legInput.segmentDetail,
           minutes: routeMinutes,
           source: legInput.segmentSource ?? "agent",
-          rawJson: serialize(legInput.source),
+          rawJson: serialize(
+            attachRouteEvidenceToSource(legInput.source, legInput.routeEvidence)
+          ),
         },
       });
 
