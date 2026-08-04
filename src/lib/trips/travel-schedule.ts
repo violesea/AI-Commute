@@ -842,44 +842,48 @@ export function assertTravelItinerarySchedule(input: {
   });
 
   const dateRange = parseTravelDateRange(input.prompt);
-  if (!dateRange) return;
+  const hasScheduledTimes = input.legs.some(
+    (leg) => leg.latestDepartAt || leg.targetArriveAt
+  );
 
-  let previousArrival: Date | undefined;
-  for (const leg of input.legs) {
-    if (!leg.latestDepartAt || !leg.targetArriveAt) {
-      throw new Error("旅行路线每一段都必须有明确的出发和到达时间。");
+  if (hasScheduledTimes) {
+    let previousArrival: Date | undefined;
+    for (const leg of input.legs) {
+      if (!leg.latestDepartAt || !leg.targetArriveAt) {
+        throw new Error("旅行路线每一段都必须有明确的出发和到达时间。");
+      }
+
+      if (leg.targetArriveAt <= leg.latestDepartAt) {
+        throw new Error("旅行路线存在到达时间不晚于出发时间的路段。");
+      }
+
+      if (previousArrival && leg.latestDepartAt < previousArrival) {
+        throw new Error("旅行路线的路段时间不是按顺序衔接的。");
+      }
+
+      const departDate = formatInTimeZone(
+        leg.latestDepartAt,
+        input.timezone || DEFAULT_TIME_ZONE,
+        "yyyy-MM-dd"
+      );
+      const arriveDate = formatInTimeZone(
+        leg.targetArriveAt,
+        input.timezone || DEFAULT_TIME_ZONE,
+        "yyyy-MM-dd"
+      );
+      if (departDate !== arriveDate) {
+        throw new Error("旅行路线包含跨午夜驾驶路段，请拆分或调整到白天。");
+      }
+
+      if (
+        dateRange &&
+        (departDate < dateRange.startDate || departDate > dateRange.endDate)
+      ) {
+        throw new Error("旅行路线时间超出用户提供的旅行日期范围。");
+      }
+
+      previousArrival = leg.targetArriveAt;
     }
-
-    if (leg.targetArriveAt <= leg.latestDepartAt) {
-      throw new Error("旅行路线存在到达时间不晚于出发时间的路段。");
-    }
-
-    if (previousArrival && leg.latestDepartAt < previousArrival) {
-      throw new Error("旅行路线的路段时间不是按顺序衔接的。");
-    }
-
-    const departDate = formatInTimeZone(
-      leg.latestDepartAt,
-      input.timezone || DEFAULT_TIME_ZONE,
-      "yyyy-MM-dd"
-    );
-    const arriveDate = formatInTimeZone(
-      leg.targetArriveAt,
-      input.timezone || DEFAULT_TIME_ZONE,
-      "yyyy-MM-dd"
-    );
-    if (departDate !== arriveDate) {
-      throw new Error("旅行路线包含跨午夜驾驶路段，请拆分或调整到白天。");
-    }
-
-    if (
-      departDate < dateRange.startDate ||
-      departDate > dateRange.endDate
-    ) {
-      throw new Error("旅行路线时间超出用户提供的旅行日期范围。");
-    }
-
-    previousArrival = leg.targetArriveAt;
   }
 
   assertCrossDayOvernightContinuity({

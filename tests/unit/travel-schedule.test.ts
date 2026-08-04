@@ -338,6 +338,38 @@ describe("travel itinerary schedule", () => {
     ).toThrow(/累计自驾约 7\.0 小时，超过用户指定的每日上限 6\.0 小时/);
   });
 
+  it("enforces schedule constraints when only the departure date and trip length are given", () => {
+    const prompt =
+      "请规划2026年8月6日出发、5天4晚北京到锡林郭勒的自驾旅行，每天驾驶不超过6小时。";
+    const legs = [
+      {
+        originName: "北京",
+        destinationName: "中途站",
+        routeMinutes: 240,
+        mode: "driving",
+        latestDepartAt: new Date("2026-08-06T00:00:00.000Z"),
+        targetArriveAt: new Date("2026-08-06T04:00:00.000Z"),
+      },
+      {
+        originName: "中途站",
+        destinationName: "锡林郭勒",
+        routeMinutes: 150,
+        mode: "driving",
+        latestDepartAt: new Date("2026-08-06T04:30:00.000Z"),
+        targetArriveAt: new Date("2026-08-06T07:00:00.000Z"),
+      },
+    ];
+
+    expect(parseTravelDateRange(prompt)).toBeNull();
+    expect(() =>
+      assertTravelItinerarySchedule({
+        prompt,
+        timezone: "Asia/Shanghai",
+        legs,
+      })
+    ).toThrow(/累计自驾约 6\.5 小时，超过用户指定的每日上限 6\.0 小时/);
+  });
+
   it("allows a day at or below the explicit self-drive ceiling", () => {
     const prompt =
       "请规划 2026-08-15 至 2026-08-19 的自驾旅行，每日驾驶上限 6 小时。";
