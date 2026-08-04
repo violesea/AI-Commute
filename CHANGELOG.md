@@ -6,7 +6,7 @@ skills_used:
 model_used: GPT-5
 model_source: visible_runtime
 created_at: 2026-08-03T00:00:00+08:00
-updated_at: 2026-08-04T06:59:17+08:00
+updated_at: 2026-08-04T08:12:03+08:00
 updated_by: codex
 ---
 
@@ -15,6 +15,7 @@ updated_by: codex
 ## Unreleased
 
 - 修复旅行路线日期时间轴的跨日和倒序风险。
+- 强化自然景观类型校验：DeepSeek V4 Flash 旅行工具使用 canonical natural type，模型误填 `other` 时可根据景点名称、理由和备注识别类型并给出机器可读修正提示。
 - 增加旅行计划总预算及费用分项展示。
 - 增加旅行首段出发前 72 小时和 24 小时天气刷新任务。
 - 设置页增加通勤模型选择、旅行固定模型说明和服务器模型接入测试；API Key 与 Base URL 保持服务端环境变量管理。

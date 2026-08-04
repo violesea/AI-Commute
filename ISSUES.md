@@ -6,7 +6,7 @@ skills_used:
 model_used: GPT-5
 model_source: visible_runtime
 created_at: 2026-08-03T00:00:00+08:00
-updated_at: 2026-08-04T06:59:17+08:00
+updated_at: 2026-08-04T08:12:03+08:00
 updated_by: codex
 ---
 
@@ -211,3 +211,13 @@ updated_by: codex
 实施记录：已增加服务端端点连续性校验、DeepSeek 修正提示、旅行创建/替换的 canonical stop 映射及单元/集成测试。
 
 验证：提交 `c59a531` 部署到 `192.168.1.56:3002` 后，真实会话 `cmsds0yjw001tlg0s92r62v7w` 创建行程 `cmsds7g68004elg0sm5s0y7tk`。行程为 8 个 stops、7 个 legs；每段 `fromStopId/toStopId` 和名称都对应相邻 stops，地图与路线分段连续性检查通过，未产生半成品行程。
+
+## ISSUE-023 · bug · P1 · in-progress
+
+模型返回自然景点时把 `naturalType` 全部写成 `other`，服务端无法识别草原、湖泊、湿地和火山等实际类型，导致自然景观多样性校验重复失败，完整旅行计划无法落盘。
+
+证据：2026-08-04 线上会话 `cmsdvzo3w00gjo10r35o5ianm` 在 `create_trip` 参数修正后，4 个自然景点的 `naturalType` 均为 `other`；服务端识别为 1 种类型并终止，会话失败且 `tripId=null`，没有半成品行程。
+
+验收：自然景观工具 schema 使用规范英文类型；模型提示禁止 `other`/`unknown`；服务端在模型误填通用类型时，可从景点名称、理由或备注识别至少三种支持充分的自然类型；真实北京→锡林郭勒请求成功落盘，且自然景点实际进入 stops 或明确标为备选。
+
+实施记录：已增加 canonical natural type 枚举、自然类型中英文文本推断和机器可读重试提示，并补充旅行单元测试与规划错误测试。待新提交部署后完成真实路线回归。

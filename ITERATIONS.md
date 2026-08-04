@@ -6,11 +6,23 @@ skills_used:
 model_used: GPT-5
 model_source: visible_runtime
 created_at: 2026-08-03T00:00:00+08:00
-updated_at: 2026-08-04T07:28:14+08:00
+updated_at: 2026-08-04T08:12:03+08:00
 updated_by: codex
 ---
 
 # Iterations
+
+## ITER-2026-08-04-04 · DeepSeek V4 Flash 自然景观回归
+
+目标：在 `deepseek-v4-flash` 真实运行中修复自然景观类型被模型写成 `other` 导致旅行计划无法落盘的问题，并完成一次北京往返锡林郭勒自驾路线评估。
+
+范围：ISSUE-023，以及天气动态边界、自驾/公共交通比较、自然/人文景点、住宿、美食、预算和避坑的端到端核验。
+
+初始证据：会话 `cmsdvzo3w00gjo10r35o5ianm` 在旧部署上因自然类型多样性校验失败，未生成半成品行程。
+
+本地实施：`src/lib/agent/planner.ts` 增加 canonical natural type 工具枚举、提示和错误修正指令；`src/lib/trips/travel-plan.ts` 从名称、理由和备注推断中英文自然类型；新增 2 组回归测试。旅行定向测试通过，生产构建通过；全量测试仍有 2 个既有失败，见交付说明。
+
+待完成：推送并部署后，以 2026-08-15 至 2026-08-19 北京往返锡林郭勒请求实跑；核对结构化 stops/legs、天气未知边界与动态刷新任务、自然类型多样性、交通对照和旅行详情页展示。
 
 ## ITER-2026-08-04-01 · 旅行路线事实一致性
 

@@ -490,6 +490,46 @@ describe("travel plan normalization", () => {
     expect(() => assertTravelPlanAttractionCoverage(plan)).not.toThrow();
   });
 
+  it("infers natural diversity from attraction text when the model uses a generic type", () => {
+    const plan = normalizeTravelPlan({
+      ...sampleTravelPlan,
+      days: 5,
+      attractions: [
+        {
+          name: "达里湖",
+          category: "natural",
+          naturalType: "other",
+          reason: "草原湖泊风光，适合清晨观景",
+        },
+        {
+          name: "乌拉盖九曲湾",
+          category: "natural",
+          naturalType: "other",
+          reason: "河流湿地与草原交汇，适合顺光拍摄",
+        },
+        {
+          name: "锡林郭勒草原火山地质公园",
+          category: "natural",
+          naturalType: "other",
+          reason: "火山地质与草原地貌组合，适合天气稳定时徒步",
+        },
+        {
+          name: "锡林河国家湿地公园",
+          category: "natural",
+          naturalType: "other",
+          reason: "湿地、芦苇和水鸟生态景观",
+        },
+        {
+          name: "元上都遗址",
+          category: "cultural",
+          reason: "元代历史遗址",
+        },
+      ],
+    });
+
+    expect(() => assertTravelPlanAttractionCoverage(plan)).not.toThrow();
+  });
+
   it("requires operational weather, route, lodging, food, and pitfall evidence", () => {
     const validPlan = normalizeTravelPlan({
       ...sampleTravelPlan,

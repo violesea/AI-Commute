@@ -6,9 +6,17 @@ skills_used:
 model_used: GPT-5
 model_source: visible_runtime
 created_at: 2026-08-03T00:00:00+08:00
-updated_at: 2026-08-04T07:28:14+08:00
+updated_at: 2026-08-04T08:12:03+08:00
 updated_by: codex
 ---
+
+## 2026-08-04 自然景观类型校验补丁（待线上回归）
+
+- 失败证据：线上会话 `cmsdvzo3w00gjo10r35o5ianm` 使用旧部署创建旅行计划时，模型把自然景点 `naturalType` 全部返回为 `other`；服务端只识别到 1 种自然类型，重复修正后终止，`tripId=null`，无半成品行程。
+- 修复：旅行工具 schema 约束 `naturalType` 为 canonical English labels；系统提示明确要求 `lake`、`wetland`、`grassland`、`mountain`、`river`、`volcanic` 等类型并禁止 `other`/`unknown`；服务端同时从名称、理由和备注识别中英文类型，错误反馈包含机器可读修正指令。
+- 本地证据：旅行计划单元测试 16 个、规划错误测试 4 个、旅行集成测试 11 个、Agent Chat Client 测试 9 个均通过；生产构建通过，类型检查在构建完成后单独执行通过。
+- 全量测试边界：61 个测试文件中 59 个通过，497 个断言中 495 个通过；系统 CA 测试依赖当前 Node 不存在的 `tls.setDefaultCACertificates`，分享 PNG 降级测试未触发下载 spy，均与本补丁无关。
+- 待验证：部署后重新运行北京→锡林郭勒自驾请求，确认自然景点进入路线或明确标为备选，并检查天气动态刷新、自驾/公共交通、住宿、美食、预算和避坑。
 
 ## 2026-08-04 路线事实一致性补丁（已线上复测）
 

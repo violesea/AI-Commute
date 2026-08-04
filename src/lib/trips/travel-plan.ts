@@ -1198,28 +1198,31 @@ export function requiredNaturalAttractionCount(days?: number) {
 }
 
 const NATURAL_TYPE_PATTERNS = [
-  ["wetland", /湿地|沼泽|芦苇/],
-  ["lake", /湖|湖泊|水库/],
-  ["volcanic", /火山|熔岩|地质/],
-  ["grassland", /草原|草甸|牧场/],
-  ["forest", /森林|林场|原始林/],
-  ["coast", /海|海岸|海滨|海岛|海滩|滨海|湾/],
-  ["river", /河流|河道|水系|溪流|江/],
-  ["canyon", /峡谷|沟|峪|河谷/],
-  ["waterfall", /瀑布|飞瀑/],
-  ["mountain", /山|峰|岭|山口/],
-  ["park", /公园|植物园|风景区|景区/],
-  ["viewpoint", /观景台|观景|台地|草原天路/],
+  ["wetland", /湿地|沼泽|芦苇|wetland|marsh|swamp/],
+  ["lake", /湖|湖泊|水库|lake|reservoir/],
+  ["volcanic", /火山|熔岩|地质|volcanic|geological|lava/],
+  ["grassland", /草原|草甸|牧场|grassland|steppe|prairie|meadow|pasture/],
+  ["forest", /森林|林场|原始林|forest|woods/],
+  ["coast", /海|海岸|海滨|海岛|海滩|滨海|coast|coastal|island|beach|seaside/],
+  ["river", /河流|河道|水系|溪流|江|river|stream|waterway|riverbank/],
+  ["canyon", /峡谷|沟|峪|河谷|canyon|gorge/],
+  ["waterfall", /瀑布|飞瀑|waterfall/],
+  ["mountain", /山|峰|岭|山口|mountain|peak|ridge|hill/],
+  ["park", /公园|植物园|风景区|景区|park|garden|scenic area/],
+  ["viewpoint", /观景台|观景|台地|草原天路|viewpoint|lookout|panorama/],
 ] as const;
 
 function naturalAttractionTypes(attraction: TravelAttraction) {
   const explicitType = attraction.naturalType?.trim();
-  const text = (
-    explicitType ??
-    [attraction.name, attraction.reason, attraction.notes]
-      .filter(Boolean)
-      .join(" ")
-  ).toLowerCase();
+  const text = [
+    explicitType,
+    attraction.name,
+    attraction.reason,
+    attraction.notes,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
   const types = NATURAL_TYPE_PATTERNS.filter(([, pattern]) =>
     pattern.test(text)
   ).map(([type]) => type);

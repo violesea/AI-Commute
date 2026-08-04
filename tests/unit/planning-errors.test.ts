@@ -64,4 +64,18 @@ describe("planning error display", () => {
     );
     expect(missingAttractions.instruction).toContain("至少包含 4 个自然景观");
   });
+
+  it("explains the canonical natural type repair when model labels are generic", () => {
+    const naturalTypes = JSON.parse(
+      stringifyToolError(
+        new Error(
+          "旅行规划的自然景观至少需要覆盖 3 种不同类型（当前只有 1 种（已识别：other））。"
+        )
+      )
+    );
+
+    expect(naturalTypes.instruction).toContain("naturalType");
+    expect(naturalTypes.instruction).toContain("不要使用 other");
+    expect(naturalTypes.instruction).toContain("lake");
+  });
 });
