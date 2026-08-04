@@ -916,8 +916,9 @@ function sameWeatherLocation(left?: string | null, right?: string | null) {
 
 /**
  * Keeps the weather overview honest for a route that crosses multiple places.
- * The single provider query is marked as queried; every other route stop stays
- * refresh_required until a pre-departure route weather refresh covers it.
+ * The latest provider query's city is marked as queried; every other route
+ * stop stays refresh_required until a pre-departure route weather refresh
+ * covers it. Model-authored forecast locations are not query evidence.
  */
 export function ensureTravelPlanWeatherLocations(
   plan: TravelPlan,
@@ -926,10 +927,7 @@ export function ensureTravelPlanWeatherLocations(
   const routeNames = uniqueStrings(
     stops.map((stop) => displayWeatherLocationName(stop.name))
   );
-  const queriedNames = uniqueStrings([
-    plan.weather.city,
-    ...(plan.weather.forecast ?? []).map((forecast) => forecast.location ?? ""),
-  ]);
+  const queriedNames = uniqueStrings([plan.weather.city]);
 
   if (routeNames.length === 0 && queriedNames.length === 0) {
     return plan;

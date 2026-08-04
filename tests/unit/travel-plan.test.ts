@@ -347,6 +347,15 @@ describe("travel plan normalization", () => {
         ...plan,
         weather: {
           ...plan.weather,
+          forecast: [
+            ...(plan.weather.forecast ?? []),
+            {
+              date: "2026-08-08",
+              location: "锡林浩特至北京",
+              summary: "模型生成的路线标签",
+              risk: "low",
+            },
+          ],
           locations: [{ name: "锡林浩特市区", status: "queried" }],
         },
       },
