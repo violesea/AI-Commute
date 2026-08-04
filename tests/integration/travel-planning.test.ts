@@ -476,12 +476,28 @@ describe("travel planning integration", () => {
       },
     };
 
+    const mockAmap = createMockAmapClient();
+    let drivingCalls = 0;
+    const amapClient = {
+      ...mockAmap,
+      async getDrivingRoute(
+        request: Parameters<typeof mockAmap.getDrivingRoute>[0]
+      ) {
+        drivingCalls += 1;
+        if (drivingCalls === 1) {
+          throw new Error("高德返回状态失败：CUQPS_HAS_EXCEEDED_THE_LIMIT (10021)");
+        }
+        return mockAmap.getDrivingRoute(request);
+      },
+    };
+
     const result = await runPlanningSession(session.id, {
-      amapClient: createMockAmapClient(),
+      amapClient,
       chatClient,
     });
 
     expect(result.status).toBe("completed");
+    expect(drivingCalls).toBe(2);
     const persisted = await prisma.trip.findUniqueOrThrow({
       where: { id: result.tripId! },
       include: {

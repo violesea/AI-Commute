@@ -84,6 +84,7 @@ const MAX_CONVERSATION_ROUNDS = {
 } as const;
 const MAX_CREATE_TRIP_FAILURES = 4;
 const MAX_IDENTICAL_CREATE_TRIP_FAILURES = 2;
+const ROUTE_EVIDENCE_QUOTA_RETRY_DELAY_MS = 1_100;
 const ORIGIN_REQUIRED_MESSAGE =
   "请先在设置中选择默认出发点，或在本次请求中提供出发点。";
 const LNG_LAT_PATTERN = /^-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?$/;
@@ -1832,6 +1833,17 @@ function routeEvidenceMatches(
   return originMatches && destinationMatches;
 }
 
+function isRouteEvidenceQuotaError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /CUQPS_HAS_EXCEEDED_THE_LIMIT|10021|QPS/i.test(message);
+}
+
+function waitForRouteEvidenceQuotaRetry() {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ROUTE_EVIDENCE_QUOTA_RETRY_DELAY_MS);
+  });
+}
+
 /**
  * The model is encouraged to query every major route, but a successful
  * create_trip must not depend on the model remembering that instruction.
@@ -1859,8 +1871,8 @@ async function ensureTravelDrivingRouteEvidence(
     if (!origin || !destination) continue;
 
     const request = { origin, destination };
-    try {
-      const route = await recordCachedToolCall({
+    const fetchRouteEvidence = () =>
+      recordCachedToolCall({
         context,
         name: "get_driving_route",
         request,
@@ -1876,25 +1888,41 @@ async function ensureTravelDrivingRouteEvidence(
         },
       });
 
-      if (
-        Number.isFinite(route.durationMinutes) &&
-        route.durationMinutes > 0 &&
-        route.summary.trim()
-      ) {
-        existingEvidence.push({
-          origin,
-          destination,
-          requestedOrigin: leg.originName ?? origin,
-          requestedDestination: leg.destinationName ?? destination,
-          durationMinutes: Math.round(route.durationMinutes),
-          summary: route.summary,
-          observedAt: new Date().toISOString(),
-        });
-      }
+    let route;
+    try {
+      route = await fetchRouteEvidence();
     } catch (error) {
       assertAgentRunActive(context.signal);
-      // A provider outage must not discard an otherwise valid travel plan;
-      // annotateTravelRouteEvidence will retain the explicit estimate path.
+      if (!isRouteEvidenceQuotaError(error)) {
+        continue;
+      }
+
+      await waitForRouteEvidenceQuotaRetry();
+      assertAgentRunActive(context.signal);
+      try {
+        route = await fetchRouteEvidence();
+      } catch (retryError) {
+        assertAgentRunActive(context.signal);
+        continue;
+      }
+    }
+
+    if (!route) continue;
+
+    if (
+      Number.isFinite(route.durationMinutes) &&
+      route.durationMinutes > 0 &&
+      route.summary.trim()
+    ) {
+      existingEvidence.push({
+        origin,
+        destination,
+        requestedOrigin: leg.originName ?? origin,
+        requestedDestination: leg.destinationName ?? destination,
+        durationMinutes: Math.round(route.durationMinutes),
+        summary: route.summary,
+        observedAt: new Date().toISOString(),
+      });
     }
   }
 
