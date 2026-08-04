@@ -1700,6 +1700,38 @@ const REQUESTED_NATURAL_TYPE_PATTERNS = [
   ["viewpoint", /观景台|观景点|viewpoint|lookout|panorama/],
 ] as const;
 
+const NATURAL_COVERAGE_TRADEOFF_PATTERN =
+  /不可行|无法|不适合|不宜|受限|超出|超过|晚于|冲突|日落|白天|驾驶|安全线|天气|路况|开放|预约|住宿|加一晚|增加一晚|拆分|删除|替代|备选|取舍|不满足/i;
+
+function hasDocumentedNaturalCoverageTradeoff(
+  plan: TravelPlan,
+  type: string
+) {
+  const routeCoverage = plan.routeCoverage;
+  if (!routeCoverage?.unmetNaturalTypes?.includes(type)) return false;
+
+  const typePattern = REQUESTED_NATURAL_TYPE_PATTERNS.find(
+    ([candidate]) => candidate === type
+  )?.[1];
+  const notes = routeCoverage.coverageNotes ?? [];
+  const hasTypeMention = notes.some(
+    (note) =>
+      note.toLowerCase().includes(type.toLowerCase()) ||
+      Boolean(typePattern?.test(note))
+  );
+  const hasConstraintMention = notes.some((note) =>
+    NATURAL_COVERAGE_TRADEOFF_PATTERN.test(note)
+  );
+  const hasPlannedNaturalAlternative = plan.attractions.some(
+    (attraction) =>
+      attraction.category === "natural" &&
+      attraction.routeStatus === "planned" &&
+      !naturalAttractionTypes(attraction).includes(type)
+  );
+
+  return hasTypeMention && hasConstraintMention && hasPlannedNaturalAlternative;
+}
+
 export function parseRequestedNaturalTypes(prompt: string) {
   const text = prompt.trim().toLowerCase();
   return REQUESTED_NATURAL_TYPE_PATTERNS.filter(([, pattern]) =>
@@ -1811,8 +1843,10 @@ export function assertTravelPlanAttractionCoverage(
     if (planned) continue;
 
     if (candidates.length > 0) {
+      if (hasDocumentedNaturalCoverageTradeoff(plan, type)) continue;
+
       throw new Error(
-        `用户明确要求的自然景观类型 ${type} 已有候选，但没有进入主路线。请把对应景点加入 stops/legs；若确实放弃，必须先调整请求或给出可执行替代路线。`
+        `用户明确要求的自然景观类型 ${type} 已有候选，但没有进入主路线。请把对应景点加入 stops/legs；若安全、天气、路况或每日驾驶上限使其确实不可执行，必须在 routeCoverage.unmetNaturalTypes 和 coverageNotes 中写明该类型的具体取舍原因，并给出已安排的其他自然景观替代方案。`
       );
     }
 

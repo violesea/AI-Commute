@@ -671,6 +671,7 @@ describe("agent planning sessions", () => {
       createTripParameters?.properties as Record<string, unknown> | undefined
     )?.travelPlan as Record<string, unknown> | undefined;
     expect(travelPlanProperties?.required).not.toContain("attractions");
+    expect(travelPlanProperties?.properties).toHaveProperty("routeCoverage");
   });
 
   it("uses the user's selected model for commute planning", async () => {

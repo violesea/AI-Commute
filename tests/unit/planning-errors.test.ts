@@ -47,10 +47,9 @@ describe("planning error display", () => {
       constraintType: "daylight_driving",
       mustChange: expect.arrayContaining(["stops", "legs"]),
     });
-    expect(daylight.instruction).toContain("不能为修正日落而把它退回备选");
-    expect(daylight.recovery.preserve).toContain(
-      "用户点名的自然类型至少各保留一个已安排景点"
-    );
+    expect(daylight.instruction).toContain("不得强行保留");
+    expect(daylight.instruction).toContain("routeCoverage.unmetNaturalTypes");
+    expect(daylight.recovery.preserve).toContain("travelPlan.routeCoverage");
     expect(daily.recovery).toMatchObject({
       constraintType: "daily_driving_limit",
       mustChange: expect.arrayContaining(["stops", "legs"]),
@@ -96,6 +95,8 @@ describe("planning error display", () => {
 
     expect(routeCoverage.instruction).toContain("加入 stops");
     expect(routeCoverage.instruction).toContain("相邻 legs");
+    expect(routeCoverage.instruction).toContain("routeCoverage.unmetNaturalTypes");
+    expect(routeCoverage.instruction).toContain("每日驾驶上限");
     expect(routeCoverage.instruction).not.toContain("仅修正每个自然景点的 naturalType");
   });
 

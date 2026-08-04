@@ -277,6 +277,86 @@ describe("travel plan normalization", () => {
     ).not.toThrow();
   });
 
+  it("allows a requested natural type to remain alternative when safety makes it infeasible", () => {
+    const plan = normalizeTravelPlan({
+      ...sampleTravelPlan,
+      days: 5,
+      routeCoverage: {
+        requestedNaturalTypes: ["lake", "wetland", "grassland", "volcanic"],
+        unmetNaturalTypes: ["lake"],
+        coverageNotes: [
+          "湖泊候选达里诺尔湖：在本次5天、每日驾驶不超过360分钟且仅白天驾驶的约束下，纳入主路线会导致返程晚于日落安全线；保留为备选，主路线用湿地、草原和火山景观替代。",
+        ],
+      },
+      attractions: [
+        {
+          name: "达里诺尔湖",
+          category: "natural",
+          naturalType: "lake",
+          reason: "湖泊风光",
+        },
+        {
+          name: "锡林郭勒草原",
+          category: "natural",
+          naturalType: "grassland",
+          reason: "草原景观",
+        },
+        {
+          name: "平顶山火山",
+          category: "natural",
+          naturalType: "volcanic",
+          reason: "火山地貌",
+        },
+        {
+          name: "锡林河湿地",
+          category: "natural",
+          naturalType: "wetland",
+          reason: "湿地生态",
+        },
+        {
+          name: "南山森林公园",
+          category: "natural",
+          naturalType: "forest",
+          reason: "森林景观",
+        },
+        { name: "贝子庙", category: "cultural", reason: "历史人文" },
+      ],
+    });
+    const stops = [
+      { order: 0, name: "北京", kind: "origin" },
+      { order: 1, name: "锡林郭勒草原", kind: "destination" },
+      { order: 2, name: "平顶山火山", kind: "destination" },
+      { order: 3, name: "锡林河湿地", kind: "destination" },
+      { order: 4, name: "南山森林公园", kind: "destination" },
+      { order: 5, name: "贝子庙", kind: "destination" },
+    ];
+    const legs = stops.slice(1).map((stop, index) => ({
+      order: index,
+      originName: stops[index].name,
+      destinationName: stop.name,
+      routeMinutes: 60,
+      mode: "driving",
+    }));
+    const aligned = alignTravelPlanAttractionsWithRoute(
+      plan,
+      stops,
+      legs,
+      "5天4晚北京到锡林郭勒，自驾，每天不超过6小时，只安排白天驾驶，优先草原、湖泊、湿地和火山自然风光"
+    );
+
+    expect(aligned.routeCoverage).toMatchObject({
+      unmetNaturalTypes: ["lake"],
+      plannedNaturalAttractions: 4,
+    });
+    expect(() =>
+      assertTravelPlanAttractionCoverage(aligned, {
+        prompt:
+          "5天4晚北京到锡林郭勒，自驾，每天不超过6小时，只安排白天驾驶，优先草原、湖泊、湿地和火山自然风光",
+        requirePlannedRequestedTypes: true,
+      })
+    ).not.toThrow();
+  });
+
   it("requires enough natural stops when the user prioritizes natural scenery", () => {
     const prompt = "5天4晚北京到锡林郭勒，自驾，优先自然风光";
     expect(hasNaturalSceneryPriority(prompt)).toBe(true);
