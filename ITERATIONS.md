@@ -6,11 +6,27 @@ skills_used:
 model_used: GPT-5
 model_source: visible_runtime
 created_at: 2026-08-03T00:00:00+08:00
-updated_at: 2026-08-04T12:39:48+08:00
+updated_at: 2026-08-04T13:38:26+08:00
 updated_by: codex
 ---
 
 # Iterations
+
+## ITER-2026-08-04-06 · 每日驾驶预算反馈与北京—锡林郭勒真实评估
+
+目标：在 `deepseek-v4-flash` 线上运行同一条北京梵谷水郡往返锡林郭勒 5 天 4 晚需求，验证每日自驾上限、白天驾驶、自然景观主路线、动态天气、交通比较、住宿、美食、预算和避坑；同时修正模型在单日超限时缺乏逐段反馈的问题。
+
+实施：提交 `58d243e` 增加每日驾驶超限的逐段诊断和机器可读修正提示，明确住宿推荐不等于新增本地驾车段；新增/更新调度、错误显示和旅行集成断言。
+
+本地验证：`tests/unit/travel-schedule.test.ts`、`tests/unit/planning-errors.test.ts`、`tests/integration/travel-planning.test.ts` 共 45/45 通过；`npm run lint` 通过；`npm run build` 通过；`git diff --check` 通过。构建仅有 Next.js 多 lockfile root 警告。
+
+线上验证：`58d243e` 已推送到 `violesea/AI-Commute` 的 `agent/travel-planning` 并部署至 `192.168.1.56:3002`；远端使用 `/opt/homebrew/bin/docker-compose`，migrate、Web、scheduler、Telegram 均运行。通勤模型接入测试成功 998ms，旅行固定 `deepseek-v4-flash` 接入测试成功 821ms。
+
+真实行程：会话 `cmse7zsqd0001ml0s8svv756u`，行程 `cmse84np0001mml0spnem3xtb`；会话 `completed`，行程 `monitoring`。11 个 stops、10 个连续 legs；D1-D5 自驾 333/307/95/175/333 分钟，均不超过 360 分钟，无跨午夜驾驶。主路线包含洪格尔草原天路、达里诺尔湖、平顶山火山地质公园、锡林河国家湿地公园 4 类自然景观及元上都遗址、贝子庙 2 个人文景点；4 个住宿、4 个美食、5200—6500 元预算、避坑、自驾/公共交通比较均可见。
+
+天气边界：当前高德可用预报截至 2026-08-07，8 月 8—12 日均标为未知/待刷新；10 条路段风险和 12 个天气刷新任务落盘。该结果验证了动态天气的安全边界，但没有获得行程期天气，不应当作实时预报。
+
+质量结论：每日驾驶硬约束、连续路线、自然景观覆盖和模型接入闭环通过；首次 `create_trip` 因 `pitfalls` 缺失重试一次后成功，结构化重试成本仍由 `ISSUE-015` 跟踪。最终会话仅记录 4 次驾车路线查询却落盘 10 个自驾 leg，路线分钟证据不完整，新增 `ISSUE-033`。
 
 ## ITER-2026-08-04-04 · DeepSeek V4 Flash 自然景观回归
 
