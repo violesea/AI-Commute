@@ -39,6 +39,7 @@ import {
 } from "@/lib/trips/travel-schedule";
 import {
   alignTravelPlanAttractionsWithRoute,
+  ensureTravelPlanWeatherLocations,
   getTravelRouteStats,
   parseTravelPlanJson,
 } from "@/lib/trips/travel-plan";
@@ -315,18 +316,22 @@ export default async function TripDetailPage({
         tripTimeZone
       )
     : null;
+  const displayRouteStops = trip.stops.map((stop) => ({
+    order: stop.order,
+    name: stop.name,
+    address: stop.address,
+    lngLat: stop.lngLat,
+    kind: stop.kind,
+    notes: stop.notes,
+  }));
   const travelPlan = displayTravelPlan
-    ? alignTravelPlanAttractionsWithRoute(
-        displayTravelPlan,
-        trip.stops.map((stop) => ({
-          order: stop.order,
-          name: stop.name,
-          address: stop.address,
-          lngLat: stop.lngLat,
-          kind: stop.kind,
-          notes: stop.notes,
-        })),
-        travelPlanLegs
+    ? ensureTravelPlanWeatherLocations(
+        alignTravelPlanAttractionsWithRoute(
+          displayTravelPlan,
+          displayRouteStops,
+          travelPlanLegs
+        ),
+        displayRouteStops
       )
     : null;
 

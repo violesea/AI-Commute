@@ -22,6 +22,9 @@ export type TravelRouteCoverage = {
   alternativeAttractions: string[];
   requestedNaturalTypes?: string[];
   unmetNaturalTypes?: string[];
+  naturalPriority?: boolean;
+  minimumPlannedNaturalAttractions?: number;
+  plannedNaturalAttractions?: number;
   coverageNotes?: string[];
 };
 
@@ -41,6 +44,12 @@ export type TravelWeatherForecast = {
   risk: TravelWeatherRisk;
   drivingAdvice?: string;
   outdoorAdvice?: string;
+};
+
+export type TravelWeatherLocation = {
+  name: string;
+  status: "queried" | "refresh_required";
+  note?: string;
 };
 
 export type TravelWeatherRouteRisk = {
@@ -63,6 +72,7 @@ export type TravelPlanWeather = {
   forecastAvailableThrough?: string;
   dynamicMonitoring?: boolean;
   refreshPolicy?: string;
+  locations?: TravelWeatherLocation[];
   forecast?: TravelWeatherForecast[];
   routeRisks?: TravelWeatherRouteRisk[];
 };
@@ -442,6 +452,22 @@ function normalizeWeatherForecast(value: unknown): TravelWeatherForecast {
   };
 }
 
+function normalizeWeatherLocation(value: unknown): TravelWeatherLocation {
+  const record = readRecord(value, "travelPlan.weather.locations[]");
+  const status = readText(
+    record,
+    "status",
+    "travelPlan.weather.locations[]",
+    false
+  );
+
+  return {
+    name: readText(record, "name", "travelPlan.weather.locations[]")!,
+    status: status === "queried" ? "queried" : "refresh_required",
+    note: readText(record, "note", "travelPlan.weather.locations[]", false),
+  };
+}
+
 function normalizeWeatherRouteRisk(value: unknown): TravelWeatherRouteRisk {
   const record = readRecord(value, "travelPlan.weather.routeRisks[]");
 
@@ -749,6 +775,18 @@ export function normalizeTravelPlan(value: unknown): TravelPlan {
             "unmetNaturalTypes",
             "travelPlan.routeCoverage"
           ),
+          naturalPriority: readOptionalBoolean(
+            routeCoverageRecord,
+            "naturalPriority"
+          ),
+          minimumPlannedNaturalAttractions: readOptionalNumber(
+            routeCoverageRecord,
+            "minimumPlannedNaturalAttractions"
+          ),
+          plannedNaturalAttractions: readOptionalNumber(
+            routeCoverageRecord,
+            "plannedNaturalAttractions"
+          ),
           coverageNotes: readOptionalStringArray(
             routeCoverageRecord,
             "coverageNotes",
@@ -781,6 +819,11 @@ export function normalizeTravelPlan(value: unknown): TravelPlan {
         "travelPlan.weather",
         false
       ),
+      locations: readOptionalArray(
+        weather,
+        "locations",
+        "travelPlan.weather"
+      ).map(normalizeWeatherLocation),
       forecast,
       routeRisks: readOptionalArray(
         weather,
@@ -839,6 +882,87 @@ function samePlace(left?: string | null, right?: string | null) {
     (normalizedLeft.includes(normalizedRight) ||
       normalizedRight.includes(normalizedLeft))
   );
+}
+
+function displayWeatherLocationName(value?: string | null) {
+  return (value ?? "")
+    .trim()
+    .replace(/(?:住宿|酒店|宾馆|民宿|客栈|过夜|驻地)$/g, "")
+    .trim();
+}
+
+function normalizeWeatherLocationName(value?: string | null) {
+  return displayWeatherLocationName(value)
+    .replace(/[（）()【】［］[\]·•,，。:：/\\_\-—\s]/g, "")
+    .toLowerCase();
+}
+
+function sameWeatherLocation(left?: string | null, right?: string | null) {
+  const normalizedLeft = normalizeWeatherLocationName(left);
+  const normalizedRight = normalizeWeatherLocationName(right);
+  if (!normalizedLeft || !normalizedRight) return false;
+  if (normalizedLeft === normalizedRight) return true;
+
+  const shorterLength = Math.min(
+    normalizedLeft.length,
+    normalizedRight.length
+  );
+  return (
+    shorterLength >= 3 &&
+    (normalizedLeft.includes(normalizedRight) ||
+      normalizedRight.includes(normalizedLeft))
+  );
+}
+
+/**
+ * Keeps the weather overview honest for a route that crosses multiple places.
+ * The single provider query is marked as queried; every other route stop stays
+ * refresh_required until a pre-departure route weather refresh covers it.
+ */
+export function ensureTravelPlanWeatherLocations(
+  plan: TravelPlan,
+  stops: readonly TravelPlanRouteStop[]
+): TravelPlan {
+  const routeNames = uniqueStrings(
+    stops.map((stop) => displayWeatherLocationName(stop.name))
+  );
+  const queriedNames = uniqueStrings([
+    plan.weather.city,
+    ...(plan.weather.forecast ?? []).map((forecast) => forecast.location ?? ""),
+  ]);
+
+  if (routeNames.length === 0 && queriedNames.length === 0) {
+    return plan;
+  }
+
+  const names = [...routeNames];
+  for (const queriedName of queriedNames) {
+    if (!names.some((name) => sameWeatherLocation(name, queriedName))) {
+      names.unshift(queriedName);
+    }
+  }
+
+  const locations = names.map((name) => {
+    const queried = queriedNames.some((queriedName) =>
+      sameWeatherLocation(name, queriedName)
+    );
+
+    return {
+      name,
+      status: queried ? ("queried" as const) : ("refresh_required" as const),
+      note: queried
+        ? "已查询当前天气；行程日期和其他路段仍需出发前刷新。"
+        : "路线经过该点，但当前天气查询未覆盖；出发前按路段刷新。",
+    };
+  });
+
+  return {
+    ...plan,
+    weather: {
+      ...plan.weather,
+      locations,
+    },
+  };
 }
 
 function sameLngLat(left?: string | null, right?: string | null) {
@@ -1227,6 +1351,16 @@ export function alignTravelPlanAttractionsWithRoute(
   const unmetNaturalTypes = requestedNaturalTypes.filter(
     (type) => !plannedNaturalTypes.has(type)
   );
+  const naturalPriority =
+    plan.routeCoverage?.naturalPriority === true ||
+    hasNaturalSceneryPriority(prompt);
+  const minimumPlannedNaturalAttractions = naturalPriority
+    ? requiredPlannedNaturalAttractionCount(plan.days)
+    : undefined;
+  const plannedNaturalAttractions = attractions.filter(
+    (attraction) =>
+      attraction.category === "natural" && attraction.routeStatus === "planned"
+  ).length;
   const coverageNotes = [...(plan.routeCoverage?.coverageNotes ?? [])];
   for (const type of unmetNaturalTypes) {
     if (!availableNaturalTypes.has(type)) {
@@ -1234,6 +1368,15 @@ export function alignTravelPlanAttractionsWithRoute(
         `未找到有证据支持的${type}主路线候选，当前以其他自然景观替代，出发前可根据天气和路况重新安排。`
       );
     }
+  }
+  if (
+    naturalPriority &&
+    minimumPlannedNaturalAttractions !== undefined &&
+    plannedNaturalAttractions < minimumPlannedNaturalAttractions
+  ) {
+    coverageNotes.push(
+      `自然风光优先要求至少 ${minimumPlannedNaturalAttractions} 个自然景点进入主路线，当前已安排 ${plannedNaturalAttractions} 个；若无法满足，必须说明天气、路况、开放或驾驶上限造成的取舍，并给出替代方案。`
+    );
   }
 
   const routeCoverage: TravelRouteCoverage = {
@@ -1243,6 +1386,13 @@ export function alignTravelPlanAttractionsWithRoute(
     alternativeAttractions: attractions
       .filter((attraction) => attraction.routeStatus === "alternative")
       .map((attraction) => attraction.name),
+    ...(naturalPriority
+      ? {
+          naturalPriority: true,
+          minimumPlannedNaturalAttractions,
+          plannedNaturalAttractions,
+        }
+      : {}),
   };
   if (requestedNaturalTypes.length > 0) {
     routeCoverage.requestedNaturalTypes = requestedNaturalTypes;
@@ -1434,6 +1584,17 @@ export function requiredNaturalAttractionCount(days?: number) {
   return days && days >= 4 ? 4 : 3;
 }
 
+const NATURAL_SCENERY_PRIORITY_PATTERN =
+  /(?:优先|重点|主打|以|偏向)[^。！？\n]{0,12}(?:自然风光|自然景观|自然景色|山水风景)|(?:自然风光|自然景观|自然景色|山水风景)[^。！？\n]{0,12}(?:优先|为主|为重点|多安排)/i;
+
+export function hasNaturalSceneryPriority(prompt?: string) {
+  return Boolean(prompt?.trim() && NATURAL_SCENERY_PRIORITY_PATTERN.test(prompt));
+}
+
+export function requiredPlannedNaturalAttractionCount(days?: number) {
+  return days && days >= 4 ? 4 : 2;
+}
+
 const NATURAL_TYPE_PATTERNS = [
   ["wetland", /湿地|沼泽|芦苇|wetland|marsh|swamp/],
   ["lake", /湖|湖泊|水库|lake|reservoir/],
@@ -1448,6 +1609,9 @@ const NATURAL_TYPE_PATTERNS = [
   ["park", /公园|植物园|风景区|景区|park|garden|scenic area/],
   ["viewpoint", /观景台|观景|台地|草原天路|viewpoint|lookout|panorama/],
 ] as const;
+
+const LODGING_LIKE_ATTRACTION_NAME_PATTERN =
+  /住宿|酒店|宾馆|旅馆|旅店|民宿|客栈|hotel|hostel|inn/i;
 
 const REQUESTED_NATURAL_TYPE_PATTERNS = [
   ["wetland", /湿地|沼泽|芦苇|wetland|marsh|swamp/],
@@ -1493,6 +1657,19 @@ export function assertTravelPlanAttractionCoverage(
   plan: TravelPlan,
   options: { prompt?: string; requirePlannedRequestedTypes?: boolean } = {}
 ) {
+  const lodgingMisclassifiedAsNatural = plan.attractions.filter(
+    (attraction) =>
+      attraction.category === "natural" &&
+      LODGING_LIKE_ATTRACTION_NAME_PATTERN.test(attraction.name)
+  );
+  if (lodgingMisclassifiedAsNatural.length > 0) {
+    throw new Error(
+      `自然景观候选不能使用住宿地点名称：${lodgingMisclassifiedAsNatural
+        .map((attraction) => attraction.name)
+        .join("、")}。请把它替换为有地点证据的真实自然景点。`
+    );
+  }
+
   const naturalCount = plan.attractions.filter(
     (attraction) => attraction.category === "natural"
   ).length;
@@ -1530,6 +1707,24 @@ export function assertTravelPlanAttractionCoverage(
     ...(plan.routeCoverage?.requestedNaturalTypes ?? []),
     ...(options.prompt ? parseRequestedNaturalTypes(options.prompt) : []),
   ]);
+
+  if (hasNaturalSceneryPriority(options.prompt)) {
+    const minimumPlannedNaturalAttractions =
+      plan.routeCoverage?.minimumPlannedNaturalAttractions ??
+      requiredPlannedNaturalAttractionCount(plan.days);
+    const plannedNaturalAttractions = plan.attractions.filter(
+      (attraction) =>
+        attraction.category === "natural" &&
+        attraction.routeStatus === "planned"
+    ).length;
+
+    if (plannedNaturalAttractions < minimumPlannedNaturalAttractions) {
+      throw new Error(
+        `自然风光优先要求至少 ${minimumPlannedNaturalAttractions} 个自然景点进入主路线，当前只有 ${plannedNaturalAttractions} 个。请把更多自然景点加入 stops/legs；如果确实受天气、开放、路况或每日驾驶上限限制，必须写明取舍原因和自然景观替代方案。`
+      );
+    }
+  }
+
   if (requestedNaturalTypes.length === 0) return;
 
   for (const type of requestedNaturalTypes) {

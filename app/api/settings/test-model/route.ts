@@ -4,6 +4,8 @@ import { isSupportedPlanningModel } from "@/lib/agent/model-config";
 import { getCurrentUser } from "@/lib/auth/session";
 import { readEnv } from "@/lib/env";
 
+const MODEL_TEST_TIMEOUT_MS = 15_000;
+
 function readModel(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -50,6 +52,10 @@ export async function POST(request: Request) {
   }
 
   const startedAt = Date.now();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort(new Error("模型接入测试超时"));
+  }, MODEL_TEST_TIMEOUT_MS);
 
   try {
     const client = createOpenAiChatClient();
@@ -62,6 +68,7 @@ export async function POST(request: Request) {
         },
       ],
       tools: [],
+      signal: controller.signal,
     });
 
     return NextResponse.json({
@@ -72,15 +79,20 @@ export async function POST(request: Request) {
       },
     });
   } catch (error) {
+    const timeoutError = controller.signal.aborted
+      ? "模型接入测试超时（15 秒），请检查服务器网络或模型服务状态。"
+      : safeErrorMessage(error);
     return NextResponse.json(
       {
         result: {
           status: "failed",
           model,
-          error: safeErrorMessage(error),
+          error: timeoutError,
         },
       },
       { status: 502 }
     );
+  } finally {
+    clearTimeout(timeout);
   }
 }

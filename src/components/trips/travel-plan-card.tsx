@@ -254,6 +254,12 @@ export function TravelPlanCard({
                       : "；均已进入主路线"}
                   </p>
                 ) : null}
+                {plan.routeCoverage.naturalPriority ? (
+                  <p className="mt-1">
+                    自然风光优先：已安排 {plan.routeCoverage.plannedNaturalAttractions ?? 0}/
+                    {plan.routeCoverage.minimumPlannedNaturalAttractions ?? 0} 个自然景点
+                  </p>
+                ) : null}
                 {plan.routeCoverage.coverageNotes?.length ? (
                   <p className="mt-1 text-[#92400e]">
                     覆盖说明：{plan.routeCoverage.coverageNotes.join("；")}
@@ -286,7 +292,9 @@ export function TravelPlanCard({
           <div className="flex shrink-0 items-start gap-2 rounded-2xl bg-[#fff4d6] px-3 py-2 text-[#7a4f00]">
             <CloudSun aria-hidden="true" className="mt-0.5 size-5" />
             <div className="min-w-0">
-              <p className="text-xs font-bold">天气参考 · {plan.weather.city}</p>
+              <p className="text-xs font-bold">
+                天气参考 · {plan.weather.locations?.length ? "线路多地" : plan.weather.city}
+              </p>
               <p className="mt-1 max-w-xs text-xs leading-5">{plan.weather.summary}</p>
             </div>
           </div>
@@ -316,6 +324,28 @@ export function TravelPlanCard({
           </span>
           <span>当前可用预报：{formatWeatherCoverage(plan)}</span>
         </div>
+        {plan.weather.locations?.length ? (
+          <div className="mt-3 rounded-2xl border border-[#c3c6d7]/50 bg-white/60 px-4 py-3 text-xs leading-5 text-[#5b6072]">
+            <p className="font-bold text-[#191c1e]">路线天气覆盖点</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {plan.weather.locations.map((location) => (
+                <span
+                  className={`rounded-full px-2.5 py-1 font-semibold ${
+                    location.status === "queried"
+                      ? "bg-[#dcfce7] text-[#166534]"
+                      : "bg-[#fef3c7] text-[#92400e]"
+                  }`}
+                  key={`${location.name}-${location.status}`}
+                >
+                  {location.name} · {location.status === "queried" ? "已查询" : "待刷新"}
+                </span>
+              ))}
+            </div>
+            <p className="mt-2">
+              路线天气点逐段刷新；“已查询”只代表当前查询，不代表行程日预报已经覆盖。
+            </p>
+          </div>
+        ) : null}
         {plan.weather.forecast?.length ? (
           <div className="mt-4 rounded-2xl bg-white/60 p-4">
             <div className="flex items-center gap-2 text-sm font-bold text-[#191c1e]">

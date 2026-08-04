@@ -76,16 +76,19 @@ describe("model connection test API", () => {
       status: "connected",
       model: "deepseek-v4-flash",
     });
-    expect(completeMock).toHaveBeenCalledWith({
-      model: "deepseek-v4-flash",
-      messages: [
-        {
-          role: "user",
-          content: "Reply with OK only. This is a connectivity test.",
-        },
-      ],
-      tools: [],
-    });
+    expect(completeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "deepseek-v4-flash",
+        messages: [
+          {
+            role: "user",
+            content: "Reply with OK only. This is a connectivity test.",
+          },
+        ],
+        tools: [],
+        signal: expect.anything(),
+      })
+    );
   });
 
   it("does not claim a connection when the server key is missing", async () => {

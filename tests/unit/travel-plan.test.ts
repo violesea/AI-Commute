@@ -6,7 +6,10 @@ import {
   completeTravelPlanArrayPayload,
   completeTravelPlanTransportPayload,
   deduplicateTravelRecommendations,
+  ensureTravelPlanWeatherLocations,
   ensureTravelPlanWeatherCoverage,
+  hasNaturalSceneryPriority,
+  requiredPlannedNaturalAttractionCount,
   getTravelRouteStats,
   normalizeTravelPlan,
   parseTravelPlanJson,
@@ -272,6 +275,87 @@ describe("travel plan normalization", () => {
         requirePlannedRequestedTypes: true,
       })
     ).not.toThrow();
+  });
+
+  it("requires enough natural stops when the user prioritizes natural scenery", () => {
+    const prompt = "5天4晚北京到锡林郭勒，自驾，优先自然风光";
+    expect(hasNaturalSceneryPriority(prompt)).toBe(true);
+    expect(requiredPlannedNaturalAttractionCount(5)).toBe(4);
+
+    const plan = normalizeTravelPlan({
+      ...sampleTravelPlan,
+      days: 5,
+      attractions: [
+        { name: "达里湖", category: "natural", reason: "湖泊风光" },
+        { name: "平顶山火山", category: "natural", reason: "火山地貌" },
+        { name: "锡林河湿地", category: "natural", reason: "湿地生态" },
+        { name: "锡林郭勒草原", category: "natural", reason: "草原开阔景观" },
+        { name: "元上都遗址", category: "cultural", reason: "历史遗址" },
+      ],
+    });
+    const shortStops = [
+      { order: 0, name: "北京", kind: "origin" },
+      { order: 1, name: "达里湖", kind: "destination" },
+      { order: 2, name: "平顶山火山", kind: "destination" },
+    ];
+    const shortLegs = shortStops.slice(1).map((stop, index) => ({
+      order: index,
+      originName: shortStops[index].name,
+      destinationName: stop.name,
+      routeMinutes: 60,
+      mode: "driving",
+    }));
+    const aligned = alignTravelPlanAttractionsWithRoute(
+      plan,
+      shortStops,
+      shortLegs,
+      prompt
+    );
+
+    expect(aligned.routeCoverage).toMatchObject({
+      naturalPriority: true,
+      plannedNaturalAttractions: 2,
+      minimumPlannedNaturalAttractions: 4,
+    });
+    expect(() =>
+      assertTravelPlanAttractionCoverage(aligned, {
+        prompt,
+        requirePlannedRequestedTypes: true,
+      })
+    ).toThrow(/自然风光优先要求至少 4 个/);
+  });
+
+  it("shows every route weather point and marks uncovered points for refresh", () => {
+    const plan = normalizeTravelPlan({
+      ...sampleTravelPlan,
+      weather: { ...sampleTravelPlan.weather, city: "北京市" },
+    });
+    const withLocations = ensureTravelPlanWeatherLocations(plan, [
+      { order: 0, name: "北京市", kind: "origin" },
+      { order: 1, name: "正蓝旗住宿", kind: "lodging" },
+      { order: 2, name: "锡林浩特市区", kind: "lodging" },
+    ]);
+
+    expect(withLocations.weather.locations).toEqual([
+      expect.objectContaining({ name: "北京市", status: "queried" }),
+      expect.objectContaining({ name: "正蓝旗", status: "refresh_required" }),
+      expect.objectContaining({ name: "锡林浩特市区", status: "refresh_required" }),
+    ]);
+
+    const modelClaimedQueried = ensureTravelPlanWeatherLocations(
+      {
+        ...plan,
+        weather: {
+          ...plan.weather,
+          locations: [{ name: "锡林浩特市区", status: "queried" }],
+        },
+      },
+      [{ order: 0, name: "锡林浩特市区", kind: "lodging" }]
+    );
+    expect(modelClaimedQueried.weather.locations).toEqual([
+      expect.objectContaining({ name: "北京市", status: "queried" }),
+      expect.objectContaining({ name: "锡林浩特市区", status: "refresh_required" }),
+    ]);
   });
 
   it("deduplicates lodging and food by POI identity while preserving provider data", () => {
@@ -612,6 +696,15 @@ describe("travel plan normalization", () => {
         ],
       })
     ).toThrow("不同类型");
+
+    expect(() =>
+      assertTravelPlanAttractionCoverage({
+        ...plan,
+        attractions: plan.attractions.map((attraction, index) =>
+          index === 0 ? { ...attraction, name: "锡林郭勒宾馆" } : attraction
+        ),
+      })
+    ).toThrow("不能使用住宿地点名称");
   });
 
   it("counts every declared type in compound natural attraction labels", () => {
