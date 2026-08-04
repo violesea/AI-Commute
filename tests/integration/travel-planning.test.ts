@@ -471,7 +471,12 @@ describe("travel planning integration", () => {
                   stops: [
                     { order: 0, name: "北京", kind: "origin" },
                     { order: 1, name: "正蓝旗", kind: "destination" },
-                    { order: 2, name: "上都湖", kind: "waypoint" },
+                    {
+                      order: 2,
+                      name: "上都湖",
+                      kind: "waypoint",
+                      notes: "D1 游览后在湖区附近住宿",
+                    },
                     { order: 3, name: "锡林浩特", kind: "destination" },
                     { order: 4, name: "北京", kind: "destination" },
                   ],
@@ -623,7 +628,12 @@ describe("travel planning integration", () => {
                   finalStopName: "北京",
                   stops: [
                     { order: 0, name: "北京", kind: "origin" },
-                    { order: 1, name: "元上都遗址", kind: "destination" },
+                    {
+                      order: 1,
+                      name: "元上都遗址",
+                      kind: "destination",
+                      notes: "D1 游览后在遗址附近住宿",
+                    },
                     { order: 2, name: "多伦", kind: "destination" },
                   ],
                   legs: [
@@ -747,7 +757,12 @@ describe("travel planning integration", () => {
                   stops: [
                     { order: 0, name: "北京", kind: "origin" },
                     { order: 1, name: "正蓝旗", kind: "destination" },
-                    { order: 2, name: "上都湖", kind: "waypoint" },
+                    {
+                      order: 2,
+                      name: "上都湖",
+                      kind: "waypoint",
+                      notes: "D1 游览后在湖区附近住宿",
+                    },
                     { order: 3, name: "锡林浩特", kind: "destination" },
                     { order: 4, name: "北京", kind: "destination" },
                   ],

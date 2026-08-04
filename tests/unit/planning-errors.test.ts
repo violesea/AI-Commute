@@ -78,4 +78,18 @@ describe("planning error display", () => {
     expect(naturalTypes.instruction).toContain("不要使用 other");
     expect(naturalTypes.instruction).toContain("lake");
   });
+
+  it("explains how to repair a cross-day itinerary without an overnight link", () => {
+    const overnight = JSON.parse(
+      stringifyToolError(
+        new Error(
+          "旅行路线跨自然日从 火山公园 继续出发，但前一日终点未明确住宿或返城连接。请在该处补充住宿，或加入返回城市的连接段。"
+        )
+      )
+    );
+
+    expect(overnight.instruction).toContain("跨自然日");
+    expect(overnight.instruction).toContain("补充景点附近住宿");
+    expect(overnight.instruction).toContain("返回城市");
+  });
 });

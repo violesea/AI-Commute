@@ -822,7 +822,38 @@ function sameLngLat(left?: string | null, right?: string | null) {
   );
 }
 
-function isGenericRouteStop(stop: TravelPlanRouteStop) {
+const CONCRETE_ATTRACTION_STOP_PATTERN =
+  /草原|草甸|牧场|湖|湿地|森林|公园|景区|旅游区|火山|地质|山|峰|岭|河|峡谷|瀑布|观景|遗址|古城|寺|博物馆|纪念馆|故居|lake|wetland|forest|park|mountain|river|canyon|waterfall|viewpoint|museum|ruins/i;
+
+function isAttractionRouteStop(
+  attraction: TravelAttraction | undefined,
+  stop: TravelPlanRouteStop
+) {
+  if (!attraction) return false;
+
+  const matchesAttraction =
+    samePlace(attraction.name, stop.name) ||
+    sameLngLat(attraction.lngLat, stop.lngLat);
+  if (!matchesAttraction) return false;
+
+  return CONCRETE_ATTRACTION_STOP_PATTERN.test(
+    [attraction.name, attraction.reason, stop.name, stop.address]
+      .filter(Boolean)
+      .join(" ")
+  );
+}
+
+function isGenericRouteStop(
+  stop: TravelPlanRouteStop,
+  attraction?: TravelAttraction
+) {
+  // A stop can be both a scenic waypoint and an overnight transition point.
+  // Let the concrete attraction identity win over lodging metadata so route
+  // coverage reflects what the traveler actually visits.
+  if (isAttractionRouteStop(attraction, stop)) {
+    return false;
+  }
+
   const text = [stop.name, stop.address, stop.kind, stop.notes]
     .filter(Boolean)
     .join(" ");
@@ -873,7 +904,7 @@ function isPlannedAttraction(
 ) {
   return stops.some(
     (stop, stopIndex) =>
-      !isGenericRouteStop(stop) &&
+      !isGenericRouteStop(stop, attraction) &&
       (samePlace(attraction.name, stop.name) ||
         sameLngLat(attraction.lngLat, stop.lngLat)) &&
       hasRouteForStop(stop, stopIndex, legs)
@@ -887,7 +918,7 @@ function isExactRouteStopMatch(
   const attractionName = normalizePlaceName(attraction.name);
 
   return stops.some((stop) => {
-    if (isGenericRouteStop(stop)) return false;
+    if (isGenericRouteStop(stop, attraction)) return false;
 
     return (
       (Boolean(attractionName) && attractionName === normalizePlaceName(stop.name)) ||

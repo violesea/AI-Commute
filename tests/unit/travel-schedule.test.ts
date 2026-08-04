@@ -195,6 +195,79 @@ describe("travel itinerary schedule", () => {
     ).not.toThrow();
   });
 
+  it("rejects continuing from a scenic stop on the next natural day without lodging", () => {
+    expect(() =>
+      assertTravelItinerarySchedule({
+        prompt: "请规划2026年8月8日至9日北京出发的自驾旅行",
+        timezone: "Asia/Shanghai",
+        stops: [
+          { order: 0, name: "北京" },
+          { order: 1, name: "火山公园", kind: "destination" },
+          { order: 2, name: "锡林河湿地", kind: "destination" },
+        ],
+        legs: [
+          {
+            order: 0,
+            originName: "北京",
+            destinationName: "火山公园",
+            routeMinutes: 300,
+            mode: "driving",
+            latestDepartAt: new Date("2026-08-08T00:00:00.000Z"),
+            targetArriveAt: new Date("2026-08-08T05:00:00.000Z"),
+          },
+          {
+            order: 1,
+            originName: "火山公园",
+            destinationName: "锡林河湿地",
+            routeMinutes: 60,
+            mode: "driving",
+            latestDepartAt: new Date("2026-08-08T23:00:00.000Z"),
+            targetArriveAt: new Date("2026-08-09T01:00:00.000Z"),
+          },
+        ],
+      })
+    ).toThrow(/火山公园.*住宿.*返城/);
+  });
+
+  it("accepts a next-day departure when the previous scenic stop states lodging", () => {
+    expect(() =>
+      assertTravelItinerarySchedule({
+        prompt: "请规划2026年8月8日至9日北京出发的自驾旅行",
+        timezone: "Asia/Shanghai",
+        stops: [
+          { order: 0, name: "北京" },
+          {
+            order: 1,
+            name: "火山公园",
+            kind: "destination",
+            notes: "当天游览后在景区附近住宿",
+          },
+          { order: 2, name: "锡林河湿地", kind: "destination" },
+        ],
+        legs: [
+          {
+            order: 0,
+            originName: "北京",
+            destinationName: "火山公园",
+            routeMinutes: 300,
+            mode: "driving",
+            latestDepartAt: new Date("2026-08-08T00:00:00.000Z"),
+            targetArriveAt: new Date("2026-08-08T05:00:00.000Z"),
+          },
+          {
+            order: 1,
+            originName: "火山公园",
+            destinationName: "锡林河湿地",
+            routeMinutes: 60,
+            mode: "driving",
+            latestDepartAt: new Date("2026-08-08T23:00:00.000Z"),
+            targetArriveAt: new Date("2026-08-09T01:00:00.000Z"),
+          },
+        ],
+      })
+    ).not.toThrow();
+  });
+
   it("rejects the aggregate daily driving time above the user's ceiling", () => {
     const prompt =
       "请规划 2026-08-15 至 2026-08-19 的自驾旅行，每天自驾不超过 6 小时。";

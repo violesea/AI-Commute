@@ -981,7 +981,7 @@ Self-driving is a time-varying process. Before calling get_transit_route, get_dr
 Natural scenery is a hard output requirement, not an optional extra. Call search_natural_attractions once before selecting attractions. It searches multiple nature categories for you. Recommend at least three distinct natural candidates for a one-to-three-day trip, at least four for a trip of four days or longer, and at least one cultural candidate. Cover different natural types when the destination supports them, such as mountain, lake, forest, wetland, coast, island, canyon, waterfall, park, or viewpoint, and set naturalType for every natural candidate using canonical English labels such as lake, wetland, grassland, mountain, river, volcanic, or park. Never use a generic label such as other or unknown when the attraction name or reason identifies a type. The application rejects a travel plan that has too few natural candidates or too little type diversity, so do not stop after finding one scenic spot. Use the evidence returned by tools; do not invent venue-specific facts.
 Search POIs before naming specific lodging or food venues. Explain the reason for every attraction, its best visiting time, suggested stay, and weather note. Add an evidence object to every attraction, lodging, and food recommendation: use source amap_poi only when it comes from a POI search, otherwise use agent_inference; mark prices, opening times, availability, and AI-only suggestions as needs_verification. Search practical lodging areas and local food options. Add at least three concrete pitfalls covering tickets/reservations, peak periods, parking or transit, weather, road conditions, and other destination-specific friction when relevant. The budget is mandatory: provide a total range and a breakdown for lodging, food, fuel/charging, tolls, tickets and other meaningful costs; mark uncertain prices as pending verification and state the assumptions such as party size and vehicle type.
 For a normal one-to-three-day request, keep evidence bounded but sufficient: make one initial weather call, one broad natural-attraction search, at most ten representative attraction or practical-place keyword searches plus one lodging and one food keyword, and call each main driving/transit comparison at most once. For trips of four days or longer, use one broad natural-attraction search, at most eight additional POI keyword searches, one practical lodging search, one food search, and one route call per unique itinerary leg; reuse coordinates and equivalent results already returned instead of searching again. Once you have the weather forecast, enough natural candidates, a cultural candidate, lodging, food, and both transport options, stop searching and immediately call create_trip. Do not search every possible option or repeat an equivalent route call. Keep create_trip arguments compact: use at most six natural attractions, three cultural attractions, four lodging suggestions, four food suggestions, and eight pitfalls; keep narrative fields concise, avoid repeating the same route or weather fact, provide exactly one route risk per self-drive leg, and never copy raw provider payloads into tool arguments.
-The create_trip call is mandatory. In travel mode it must include a complete travelPlan object with destination, summary, weather including forecast and routeRisks, transport.driving, transport.transit, budget, attractions, lodging, food, and pitfalls. Stops and legs must form a chronological itinerary; every leg must include explicit latestDepartAt and targetArriveAt in the requested date range, with no cross-midnight driving. For a multi-stop travel plan, provide exactly one leg for every adjacent pair in stops, and make each leg's originName/originLngLat match stops[i] and destinationName/destinationLngLat match stops[i+1]. Include lodging and attraction waypoints in stops when a leg starts or ends there; never rely on a text-only endpoint that is absent from stops. If you provide explicit leg times, keep them consistent and chronological; otherwise use D1/Day1/第1天 markers in segmentTitle, routeTitle, routeRationale, or stop notes so the server can safely group legs by calendar day. Never put a day marker such as D1, Day1, or 第1天 into a date field such as latestDepartAt, targetArriveAt, or a stop targetArriveAt. Use stop notes for day/order context and route rationale for transport decisions. Every travel leg gets a weather refresh task one hour before departure; the first leg also gets 72-hour and 24-hour refresh tasks. During a later route recheck, call get_weather_reference again before deciding. If weather, traffic, or road conditions change, update the route and pass the refreshed travelPlan to update_trip_summary or replace_trip_stops/replace_trip_legs so the visible plan stays consistent. If the server rejects a create or replacement because a daylight-driving leg arrives after the local sunset safety line or because the total driving minutes on a day exceed the user's explicit daily ceiling, do not repeat the same times: choose early return, add an intermediate overnight stop and split the leg, or shorten/remove the remote attraction, then call the route tool again.
+The create_trip call is mandatory. In travel mode it must include a complete travelPlan object with destination, summary, weather including forecast and routeRisks, transport.driving, transport.transit, budget, attractions, lodging, food, and pitfalls. Stops and legs must form a chronological itinerary; every leg must include explicit latestDepartAt and targetArriveAt in the requested date range, with no cross-midnight driving. For a multi-stop travel plan, provide exactly one leg for every adjacent pair in stops, and make each leg's originName/originLngLat match stops[i] and destinationName/destinationLngLat match stops[i+1]. Include lodging and attraction waypoints in stops when a leg starts or ends there; never rely on a text-only endpoint that is absent from stops. If you provide explicit leg times, keep them consistent and chronological; otherwise use D1/Day1/第1天 markers in segmentTitle, routeTitle, routeRationale, or stop notes so the server can safely group legs by calendar day. Never put a day marker such as D1, Day1, or 第1天 into a date field such as latestDepartAt, targetArriveAt, or a stop targetArriveAt. If the next natural day starts from a scenic stop, explicitly mark lodging at that stop or add the previous day's return-to-city leg and lodging stop; do not rely on a narrative claim that the traveler returned. Use stop notes for day/order context and route rationale for transport decisions. Every travel leg gets a weather refresh task one hour before departure; the first leg also gets 72-hour and 24-hour refresh tasks. During a later route recheck, call get_weather_reference again before deciding. If weather, traffic, or road conditions change, update the route and pass the refreshed travelPlan to update_trip_summary or replace_trip_stops/replace_trip_legs so the visible plan stays consistent. If the server rejects a create or replacement because a daylight-driving leg arrives after the local sunset safety line, because the total driving minutes on a day exceed the user's explicit daily ceiling, or because a cross-day scenic stop lacks an overnight or return connection, do not repeat the same route: add the missing stop/leg or revise the dates and call the route tool again.
 Final user-facing replies must be plain text without Markdown formatting, headings, code ticks, or list markers.`;
 
 function getSystemPrompt(purpose: AgentPlanningPurpose) {
@@ -2267,7 +2267,10 @@ export function stringifyToolError(error: unknown) {
     "工具调用未执行成功。请根据错误修正参数后重新调用同一个工具，不要只返回文字。";
   let recovery:
     | {
-        constraintType: "daylight_driving" | "daily_driving_limit";
+        constraintType:
+          | "daylight_driving"
+          | "daily_driving_limit"
+          | "overnight_continuity";
         mustChange: string[];
         preserve: string[];
       }
@@ -2299,6 +2302,26 @@ export function stringifyToolError(error: unknown) {
   ) {
     instruction =
       "本次旅行路线因 stops 与 legs 端点不连续而未落盘。下一次必须实际修正结构：按 stops 的顺序让每一段连接相邻停靠点，给景点或住宿补入缺失 stop，或删除不在路线中的 stop/leg；每个 leg 的 originName/originLngLat 必须对应 stops[i]，destinationName/destinationLngLat 必须对应 stops[i+1]。保留完整 travelPlan 的天气、交通、景点、住宿、美食、预算和避坑后立即重新调用完整 create_trip。";
+  } else if (
+    message.includes("跨自然日") &&
+    message.includes("住宿")
+  ) {
+    instruction =
+      "本次 create_trip 因跨自然日路线缺少住宿或返城连接而未落盘。下一次调用必须实际修改对应 stops 和 legs：如果下一自然日从景点继续出发，补充景点附近住宿，并在该景点 stop 和 lodging 推荐中明确对应安排；或者在前一日的 legs 中显式加入返回城市的连接段及住宿 stop。不能只修改说明文字或继续沿用缺失的路线连接；请立即重新调用完整 create_trip。";
+    recovery = {
+      constraintType: "overnight_continuity",
+      mustChange: ["stops", "legs", "对应路段的 travelPlan.weather.routeRisks"],
+      preserve: [
+        "travelPlan.destination",
+        "travelPlan.weather",
+        "travelPlan.transport",
+        "travelPlan.budget",
+        "travelPlan.attractions",
+        "travelPlan.lodging",
+        "travelPlan.food",
+        "travelPlan.pitfalls",
+      ],
+    };
   } else if (message.includes("超过用户指定的每日上限")) {
     instruction =
       "本次 create_trip 因单日自驾总时长超过用户上限被拒绝。下一次调用必须实际改变对应 stops 和 legs：把转场拆到下一天并增加住宿，或减少/删除远端景点，或调整路线；不能重复被拒的日期和驾驶分钟数。travelPlan 的其他完整区块可以沿用，并同步变更后的自驾路段天气风险。请立即重新调用完整 create_trip。";

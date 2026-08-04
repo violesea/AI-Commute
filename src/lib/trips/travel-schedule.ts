@@ -531,6 +531,77 @@ function findDestinationStopIndex(
   );
 }
 
+function hasOvernightAccommodation(stop?: PlannedTripStopInput) {
+  if (!stop) return false;
+
+  return /lodging|hotel|accommodation|overnight|住宿|酒店|宾馆|民宿|客栈|过夜/i.test(
+    [stop.name, stop.address, stop.kind, stop.notes]
+      .filter(Boolean)
+      .join(" ")
+  );
+}
+
+function isAttractionLikeStop(stop?: PlannedTripStopInput) {
+  if (!stop) return false;
+
+  return /草原|草甸|牧场|湖|湿地|森林|公园|景区|旅游区|火山|地质|山|峰|岭|河|峡谷|瀑布|观景|景点|遗址|古城|寺|博物馆|纪念馆|故居|lake|wetland|forest|park|mountain|river|canyon|waterfall|viewpoint|museum|ruins/i.test(
+    [stop.name, stop.address, stop.kind, stop.notes]
+      .filter(Boolean)
+      .join(" ")
+  );
+}
+
+function destinationStopForLeg(
+  stops: PlannedTripStopInput[],
+  leg: PlannedTripLegInput,
+  legIndex: number
+) {
+  const destinationIndex = findDestinationStopIndex(
+    stops,
+    leg,
+    Math.min(legIndex + 1, stops.length - 1)
+  );
+  return destinationIndex >= 0 ? stops[destinationIndex] : stops[legIndex + 1];
+}
+
+function assertCrossDayOvernightContinuity(input: {
+  stops: PlannedTripStopInput[];
+  legs: PlannedTripLegInput[];
+  timezone: string;
+}) {
+  if (input.stops.length < 2 || input.legs.length < 2) return;
+
+  let previousArrivalDate: string | undefined;
+  let previousDestination: PlannedTripStopInput | undefined;
+
+  for (const [index, leg] of input.legs.entries()) {
+    if (!leg.latestDepartAt || !leg.targetArriveAt) continue;
+
+    const departureDate = formatInTimeZone(
+      leg.latestDepartAt,
+      input.timezone || DEFAULT_TIME_ZONE,
+      "yyyy-MM-dd"
+    );
+    if (
+      previousArrivalDate &&
+      departureDate !== previousArrivalDate &&
+      isAttractionLikeStop(previousDestination) &&
+      !hasOvernightAccommodation(previousDestination)
+    ) {
+      throw new Error(
+        `旅行路线跨自然日从 ${previousDestination?.name ?? "该景点"} 继续出发，但前一日终点未明确住宿或返城连接。请在该处补充景点附近住宿，或在前一日加入返回城市的连接段后再继续下一日路线。`
+      );
+    }
+
+    previousArrivalDate = formatInTimeZone(
+      leg.targetArriveAt,
+      input.timezone || DEFAULT_TIME_ZONE,
+      "yyyy-MM-dd"
+    );
+    previousDestination = destinationStopForLeg(input.stops, leg, index);
+  }
+}
+
 function orderedRouteItems<T extends { order?: number }>(items: T[]) {
   return [...items].sort(
     (left, right) =>
@@ -773,6 +844,12 @@ export function assertTravelItinerarySchedule(input: {
     previousArrival = leg.targetArriveAt;
   }
 
+  assertCrossDayOvernightContinuity({
+    stops: input.stops ?? [],
+    legs: input.legs,
+    timezone: input.timezone,
+  });
+
   const daylightViolation = findDaylightDrivingViolation(input);
   if (daylightViolation) {
     throw new Error(
@@ -814,6 +891,25 @@ export function ensureTravelPlanRouteRiskCoverage(
   }
 
   const existingRisks = plan.weather.routeRisks ?? [];
+  const canonicalRoutes = new Map(
+    drivingLegs.map(({ leg, order }) => {
+      const endpoints = [leg.originName?.trim(), leg.destinationName?.trim()].filter(
+        Boolean
+      ) as string[];
+      const route =
+        endpoints.length === 2
+          ? endpoints.join("→")
+          : leg.routeTitle || leg.segmentTitle || `第 ${order} 段自驾`;
+      return [order, route] as const;
+    })
+  );
+  const canonicalRisks = existingRisks.map((risk) => {
+    const canonicalRoute =
+      risk.legOrder === undefined
+        ? undefined
+        : canonicalRoutes.get(risk.legOrder);
+    return canonicalRoute ? { ...risk, route: canonicalRoute } : risk;
+  });
   const existingOrders = new Set(
     existingRisks
       .map((risk) => risk.legOrder)
@@ -867,7 +963,7 @@ export function ensureTravelPlanRouteRiskCoverage(
     ...plan,
     weather: {
       ...plan.weather,
-      routeRisks: [...existingRisks, ...generatedRisks].sort(
+      routeRisks: [...canonicalRisks, ...generatedRisks].sort(
         (left, right) => (left.legOrder ?? Number.MAX_SAFE_INTEGER) - (right.legOrder ?? Number.MAX_SAFE_INTEGER)
       ),
     },

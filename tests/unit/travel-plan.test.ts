@@ -163,6 +163,49 @@ describe("travel plan normalization", () => {
     });
   });
 
+  it("keeps a scenic stop planned when it also carries an overnight stay", () => {
+    const plan = normalizeTravelPlan({
+      ...sampleTravelPlan,
+      attractions: [
+        {
+          name: "张北草原",
+          category: "natural",
+          naturalType: "grassland",
+          reason: "草原景观和日落视野适合作为当天游览重点",
+        },
+      ],
+    });
+    const aligned = alignTravelPlanAttractionsWithRoute(
+      plan,
+      [
+        { order: 0, name: "北京", kind: "origin" },
+        {
+          order: 1,
+          name: "张北草原",
+          kind: "lodging",
+          notes: "当天游览后在景区附近住宿",
+        },
+      ],
+      [
+        {
+          order: 0,
+          originName: "北京",
+          destinationName: "张北草原",
+          routeMinutes: 180,
+          mode: "driving",
+        },
+      ]
+    );
+
+    expect(aligned.attractions).toEqual([
+      expect.objectContaining({ name: "张北草原", routeStatus: "planned" }),
+    ]);
+    expect(aligned.routeCoverage).toEqual({
+      plannedAttractions: ["张北草原"],
+      alternativeAttractions: [],
+    });
+  });
+
   it("merges provider aliases for the same planned attraction", () => {
     const plan = normalizeTravelPlan({
       ...sampleTravelPlan,
@@ -663,6 +706,42 @@ describe("travel plan normalization", () => {
     expect(
       covered.weather.routeRisks?.some((risk) => risk.legOrder === 3)
     ).toBe(false);
+  });
+
+  it("rewrites existing route-risk labels from canonical leg endpoints", () => {
+    const plan = normalizeTravelPlan(sampleTravelPlan);
+    const covered = ensureTravelPlanRouteRiskCoverage(
+      plan,
+      [
+        {
+          order: 0,
+          originName: "北京",
+          destinationName: "景点一",
+          routeMinutes: 120,
+          mode: "driving",
+          latestDepartAt: new Date("2026-08-08T00:00:00.000Z"),
+          targetArriveAt: new Date("2026-08-08T02:00:00.000Z"),
+        },
+        {
+          order: 1,
+          originName: "景点一",
+          destinationName: "景点二",
+          routeMinutes: 20,
+          mode: "driving",
+          latestDepartAt: new Date("2026-08-08T03:00:00.000Z"),
+          targetArriveAt: new Date("2026-08-08T03:20:00.000Z"),
+        },
+      ],
+      "Asia/Shanghai",
+      "请规划2026年8月8日至9日北京出发的自驾旅行"
+    );
+
+    expect(covered.weather.routeRisks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ legOrder: 1, route: "北京→景点一" }),
+        expect.objectContaining({ legOrder: 2, route: "景点一→景点二" }),
+      ])
+    );
   });
 
   it("rejects incomplete plans and safely hides invalid persisted JSON", () => {
