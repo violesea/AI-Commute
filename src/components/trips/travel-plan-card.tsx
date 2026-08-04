@@ -66,6 +66,10 @@ function formatWeatherCoverage(plan: TravelPlan) {
   return "未记录当前预报边界，按每次刷新结果执行";
 }
 
+function formatDrivingDuration(minutes: number) {
+  return `${minutes} 分钟（约 ${(minutes / 60).toFixed(1)} 小时）`;
+}
+
 function calendarDayDifference(startDate: string, endDate: string) {
   const [startYear, startMonth, startDay] = startDate.split("-").map(Number);
   const [endYear, endMonth, endDay] = endDate.split("-").map(Number);
@@ -448,7 +452,9 @@ export function TravelPlanCard({
               自驾方案
             </div>
             <p className="mt-2 text-sm leading-6 text-[#434655]">
-              {plan.transport.driving.summary}
+              {routeStats
+                ? `按已落盘路线，自驾 ${formatDrivingDuration(routeStats.totalDrivingMinutes)}`
+                : plan.transport.driving.summary}
             </p>
             <p className="mt-2 text-xs leading-5 text-[#737686]">
               {plan.transport.driving.reason}

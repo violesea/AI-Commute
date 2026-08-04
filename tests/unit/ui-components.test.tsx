@@ -567,6 +567,7 @@ describe("sample-aligned UI components", () => {
     expect(html).toContain("行程天气与自驾影响");
     expect(html).toContain("自驾路段天气风险");
     expect(html).toContain("自驾方案");
+    expect(html).toContain("按已落盘路线，自驾 1195 分钟（约 19.9 小时）");
     expect(html).toContain("公共交通方案");
     expect(html).toContain("自然景观");
     expect(html).toContain("人文历史");
