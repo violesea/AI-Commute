@@ -1708,6 +1708,12 @@ const NATURAL_TYPE_PATTERNS = [
   ["viewpoint", /观景台|观景|台地|草原天路|viewpoint|lookout|panorama/],
 ] as const;
 
+const EXPLICIT_NATURAL_TYPES = new Set([
+  ...NATURAL_TYPE_PATTERNS.map(([type]) => type),
+  "geological",
+  "island",
+]);
+
 const LODGING_LIKE_ATTRACTION_NAME_PATTERN =
   /住宿|酒店|宾馆|旅馆|旅店|民宿|客栈|hotel|hostel|inn/i;
 
@@ -1767,6 +1773,14 @@ export function parseRequestedNaturalTypes(prompt: string) {
 
 function naturalAttractionTypes(attraction: TravelAttraction): string[] {
   const explicitType = attraction.naturalType?.trim();
+  const normalizedExplicitType = explicitType?.toLowerCase();
+  if (
+    normalizedExplicitType &&
+    EXPLICIT_NATURAL_TYPES.has(normalizedExplicitType)
+  ) {
+    return [normalizedExplicitType];
+  }
+
   const text = [
     explicitType,
     attraction.name,

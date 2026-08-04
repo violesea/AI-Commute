@@ -358,6 +358,76 @@ describe("travel plan normalization", () => {
     ).not.toThrow();
   });
 
+  it("does not count a volcanic attraction as mountain only because its name contains 山", () => {
+    const plan = normalizeTravelPlan({
+      ...sampleTravelPlan,
+      days: 5,
+      routeCoverage: {
+        requestedNaturalTypes: ["volcanic", "mountain"],
+      },
+      attractions: [
+        {
+          name: "平顶山锡林郭勒草原火山地质公园",
+          category: "natural",
+          naturalType: "volcanic",
+          reason: "火山地质景观",
+        },
+        {
+          name: "乌兰五台景区",
+          category: "natural",
+          naturalType: "mountain",
+          reason: "山地景观",
+        },
+        {
+          name: "锡林河国家湿地公园",
+          category: "natural",
+          naturalType: "wetland",
+          reason: "湿地生态",
+        },
+        {
+          name: "贡宝拉格草原",
+          category: "natural",
+          naturalType: "grassland",
+          reason: "草原景观",
+        },
+        { name: "贝子庙", category: "cultural", reason: "历史人文" },
+      ],
+    });
+    const stops = [
+      { order: 0, name: "北京", kind: "origin" },
+      {
+        order: 1,
+        name: "平顶山锡林郭勒草原火山地质公园",
+        kind: "destination",
+      },
+      { order: 2, name: "锡林河国家湿地公园", kind: "destination" },
+      { order: 3, name: "贡宝拉格草原", kind: "destination" },
+      { order: 4, name: "贝子庙", kind: "destination" },
+    ];
+    const legs = stops.slice(1).map((stop, index) => ({
+      order: index,
+      originName: stops[index].name,
+      destinationName: stop.name,
+      routeMinutes: 60,
+      mode: "driving" as const,
+    }));
+
+    const aligned = alignTravelPlanAttractionsWithRoute(
+      plan,
+      stops,
+      legs,
+      "5天北京到锡林郭勒，自驾，优先火山和山地自然风光"
+    );
+
+    expect(aligned.routeCoverage).toMatchObject({
+      requestedNaturalTypes: ["volcanic", "mountain"],
+      unmetNaturalTypes: ["mountain"],
+    });
+    expect(aligned.routeCoverage?.alternativeAttractions).toContain(
+      "乌兰五台景区"
+    );
+  });
+
   it("requires enough natural stops when the user prioritizes natural scenery", () => {
     const prompt = "5天4晚北京到锡林郭勒，自驾，优先自然风光";
     expect(hasNaturalSceneryPriority(prompt)).toBe(true);

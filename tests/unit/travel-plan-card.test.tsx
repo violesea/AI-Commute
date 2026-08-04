@@ -69,6 +69,28 @@ describe("TravelPlanCard route coverage", () => {
     expect(screen.getByText(/本次路线已安排 1 个景点，备选/)).toBeInTheDocument();
   });
 
+  it("shows explicitly requested natural types that are not covered", () => {
+    render(
+      <TravelPlanCard
+        plan={{
+          ...plan,
+          routeCoverage: {
+            plannedAttractions: plan.routeCoverage?.plannedAttractions ?? [],
+            alternativeAttractions:
+              plan.routeCoverage?.alternativeAttractions ?? [],
+            requestedNaturalTypes: ["volcanic", "mountain"],
+            unmetNaturalTypes: ["mountain"],
+          },
+        }}
+      />
+    );
+
+    expect(
+      screen.getByText("用户点名自然类型：volcanic、mountain；未覆盖：mountain")
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/均已进入主路线/)).not.toBeInTheDocument();
+  });
+
   it("labels itinerary weather relative to the trip and separates baseline weather", () => {
     render(
       <TravelPlanCard
