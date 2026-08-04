@@ -62,13 +62,20 @@ type EnvSource = Partial<Record<string, string | undefined>>;
 const AGENT_MAX_OUTPUT_TOKENS = 32768;
 export const TRAVEL_MAX_OUTPUT_TOKENS = 16384;
 const MAX_ASSISTANT_CONTEXT_CHARS = 1200;
-const TRANSIENT_CHAT_RETRY_DELAY_MS = 150;
+const TRANSIENT_CHAT_RETRY_DELAY_MS = 500;
+const TRANSIENT_CHAT_RETRY_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
 
-function isTransientChatTransportError(error: unknown) {
+function isTransientChatError(error: unknown) {
+  const status =
+    error && typeof error === "object" && "status" in error
+      ? (error as { status?: unknown }).status
+      : undefined;
+  if (typeof status === "number" && TRANSIENT_CHAT_RETRY_STATUSES.has(status)) {
+    return true;
+  }
+
   const message = error instanceof Error ? error.message : String(error);
-  return /premature close|socket hang up|econnreset|etimedout|fetch failed/i.test(
-    message
-  );
+  return /premature close|socket hang up|econnreset|etimedout|fetch failed|service is too busy|temporarily unavailable|overloaded|rate limit/i.test(message);
 }
 
 function waitBeforeChatRetry() {
@@ -329,7 +336,7 @@ export function createOpenAiChatClient(
       try {
         completion = (await requestCompletion()) as OpenAI.Chat.Completions.ChatCompletion;
       } catch (error) {
-        if (!isTransientChatTransportError(error) || input.signal?.aborted) {
+        if (!isTransientChatError(error) || input.signal?.aborted) {
           throw error;
         }
 

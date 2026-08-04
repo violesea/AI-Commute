@@ -262,6 +262,36 @@ describe("createOpenAiChatClient", () => {
     completionMock.mockReset();
   });
 
+  it("retries a transient 503 provider failure once", async () => {
+    const serviceBusyError = Object.assign(
+      new Error("503 Service is too busy"),
+      { status: 503 }
+    );
+    completionMock
+      .mockRejectedValueOnce(serviceBusyError)
+      .mockResolvedValueOnce({
+        choices: [{ message: { content: "503 后重试成功" } }],
+      });
+
+    const client = createOpenAiChatClient({
+      OPENAI_API_KEY: "test-key",
+      OPENAI_BASE_URL: "https://api.deepseek.com/v1",
+    });
+
+    await expect(
+      client.complete({
+        messages: [{ role: "user", content: "规划旅行" }],
+        tools: [],
+        model: "deepseek-v4-flash",
+        purpose: "travel",
+      })
+    ).resolves.toMatchObject({
+      message: { content: "503 后重试成功" },
+    });
+    expect(completionMock).toHaveBeenCalledTimes(2);
+    completionMock.mockReset();
+  });
+
   it("does not retry a non-transport model error", async () => {
     completionMock.mockRejectedValueOnce(new Error("invalid request"));
 

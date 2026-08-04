@@ -79,6 +79,20 @@ describe("planning error display", () => {
     expect(naturalTypes.instruction).toContain("lake");
   });
 
+  it("requires a requested natural candidate to enter the main route", () => {
+    const routeCoverage = JSON.parse(
+      stringifyToolError(
+        new Error(
+          "用户明确要求的自然景观类型 volcanic 已有候选，但没有进入主路线。请把对应景点加入 stops/legs；若确实放弃，必须先调整请求或给出可执行替代路线。"
+        )
+      )
+    );
+
+    expect(routeCoverage.instruction).toContain("加入 stops");
+    expect(routeCoverage.instruction).toContain("相邻 legs");
+    expect(routeCoverage.instruction).not.toContain("仅修正每个自然景点的 naturalType");
+  });
+
   it("explains how to repair a cross-day itinerary without an overnight link", () => {
     const overnight = JSON.parse(
       stringifyToolError(
