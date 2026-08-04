@@ -302,6 +302,10 @@ describe("travel itinerary schedule", () => {
       date: "2026-08-15",
       drivingMinutes: 390,
       limitMinutes: 360,
+      legs: [
+        { order: 0, route: "北京→元上都遗址", routeMinutes: 342 },
+        { order: 1, route: "元上都遗址→多伦", routeMinutes: 48 },
+      ],
     });
 
     expect(() =>
@@ -310,7 +314,9 @@ describe("travel itinerary schedule", () => {
         timezone: "Asia/Shanghai",
         legs,
       })
-    ).toThrow(/累计自驾约 6\.5 小时，超过用户指定的每日上限 6\.0 小时/);
+    ).toThrow(
+      /累计自驾 390 分钟（约 6\.5 小时），超过用户指定的每日上限 360 分钟（6\.0 小时）.*违规路段：第 1 段 北京→元上都遗址 342 分钟；第 2 段 元上都遗址→多伦 48 分钟/
+    );
   });
 
   it("enforces the daily ceiling when the user omits the year", () => {
@@ -335,7 +341,7 @@ describe("travel itinerary schedule", () => {
           },
         ],
       })
-    ).toThrow(/累计自驾约 7\.0 小时，超过用户指定的每日上限 6\.0 小时/);
+    ).toThrow(/累计自驾 418 分钟（约 7\.0 小时），超过用户指定的每日上限 360 分钟（6\.0 小时）/);
   });
 
   it("enforces schedule constraints when only the departure date and trip length are given", () => {
@@ -367,7 +373,7 @@ describe("travel itinerary schedule", () => {
         timezone: "Asia/Shanghai",
         legs,
       })
-    ).toThrow(/累计自驾约 6\.5 小时，超过用户指定的每日上限 6\.0 小时/);
+    ).toThrow(/累计自驾 390 分钟（约 6\.5 小时），超过用户指定的每日上限 360 分钟（6\.0 小时）/);
   });
 
   it("allows a day at or below the explicit self-drive ceiling", () => {

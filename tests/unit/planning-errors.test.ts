@@ -33,7 +33,7 @@ describe("planning error display", () => {
     const daily = JSON.parse(
       stringifyToolError(
         new Error(
-          "2026-08-08 累计自驾约 6.5 小时，超过用户指定的每日上限 6.0 小时。"
+          "2026-08-08 累计自驾 390 分钟（约 6.5 小时），超过用户指定的每日上限 360 分钟（6.0 小时），超出 30 分钟。违规路段：第 1 段 北京→元上都遗址 342 分钟；第 2 段 元上都遗址→多伦 48 分钟。"
         )
       )
     );
@@ -51,6 +51,8 @@ describe("planning error display", () => {
       constraintType: "daily_driving_limit",
       mustChange: expect.arrayContaining(["stops", "legs"]),
     });
+    expect(daily.instruction).toContain("逐段相加");
+    expect(daily.instruction).toContain("住宿推荐不等于必须新增一段本地驾车");
     expect(budget.instruction).toContain("只需补齐 travelPlan.budget");
   });
 

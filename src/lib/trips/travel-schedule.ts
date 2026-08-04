@@ -985,7 +985,47 @@ export type DailyDrivingLimitViolation = {
   date: string;
   drivingMinutes: number;
   limitMinutes: number;
+  legs: Array<{
+    order: number;
+    route: string;
+    routeMinutes: number;
+  }>;
 };
+
+function getTravelDrivingLegDetails(
+  legs: readonly PlannedTripLegInput[],
+  timezone: string
+) {
+  const dailyDriving = new Map<
+    string,
+    Array<{ order: number; route: string; routeMinutes: number }>
+  >();
+
+  for (const [index, leg] of legs.entries()) {
+    if (!isDrivingLeg(leg) || !leg.latestDepartAt) continue;
+
+    const date = formatInTimeZone(
+      leg.latestDepartAt,
+      timezone || DEFAULT_TIME_ZONE,
+      "yyyy-MM-dd"
+    );
+    const routeMinutes = Math.max(0, Math.round(leg.routeMinutes));
+    const route =
+      [leg.originName, leg.destinationName].filter(Boolean).join("→") ||
+      leg.routeTitle ||
+      leg.segmentTitle ||
+      `第 ${leg.order ?? index + 1} 段`;
+    const dayLegs = dailyDriving.get(date) ?? [];
+    dayLegs.push({
+      order: leg.order ?? index,
+      route,
+      routeMinutes,
+    });
+    dailyDriving.set(date, dayLegs);
+  }
+
+  return dailyDriving;
+}
 
 export function getTravelDailyDrivingMinutes(
   legs: readonly PlannedTripLegInput[],
@@ -1018,17 +1058,29 @@ export function findDailyDrivingLimitViolation(input: {
   const limitMinutes = parseDailyDrivingLimitMinutes(input.prompt);
   if (!limitMinutes) return undefined;
 
-  const dailyDriving = getTravelDailyDrivingMinutes(input.legs, input.timezone);
+  const dailyDrivingLegs = getTravelDrivingLegDetails(
+    input.legs,
+    input.timezone
+  );
 
-  const violation = [...dailyDriving.entries()]
+  const violation = [...dailyDrivingLegs.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
-    .find(([, drivingMinutes]) => drivingMinutes > limitMinutes);
+    .map(([date, legs]) => ({
+      date,
+      legs,
+      drivingMinutes: legs.reduce(
+        (total, leg) => total + leg.routeMinutes,
+        0
+      ),
+    }))
+    .find(({ drivingMinutes }) => drivingMinutes > limitMinutes);
 
   return violation
     ? {
-        date: violation[0],
-        drivingMinutes: violation[1],
+        date: violation.date,
+        drivingMinutes: violation.drivingMinutes,
         limitMinutes,
+        legs: violation.legs,
       }
     : undefined;
 }
@@ -1038,7 +1090,13 @@ function formatDailyDrivingConstraintError(
 ) {
   const drivingHours = (violation.drivingMinutes / 60).toFixed(1);
   const limitHours = (violation.limitMinutes / 60).toFixed(1);
-  return `${violation.date} 累计自驾约 ${drivingHours} 小时，超过用户指定的每日上限 ${limitHours} 小时。请把途中转场拆到下一天、增加中途住宿、减少景点或调整路线后重新调用 create_trip。`;
+  const legDetails = violation.legs
+    .map(
+      (leg) =>
+        `第 ${leg.order + 1} 段 ${leg.route} ${leg.routeMinutes} 分钟`
+    )
+    .join("；");
+  return `${violation.date} 累计自驾 ${violation.drivingMinutes} 分钟（约 ${drivingHours} 小时），超过用户指定的每日上限 ${violation.limitMinutes} 分钟（${limitHours} 小时），超出 ${violation.drivingMinutes - violation.limitMinutes} 分钟。违规路段：${legDetails}。请按这些路段重新计算日期：把转场拆到下一天并在实际停靠点安排住宿，或减少/删除远端景点；住宿推荐不等于必须新增本地驾车段，不能只修改文字或重复同一组 stops/legs，修正后重新调用 create_trip。`;
 }
 
 const DAYLIGHT_DRIVING_PATTERNS = [

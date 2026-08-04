@@ -722,7 +722,7 @@ describe("travel planning integration", () => {
 
     expect(result.status).toBe("completed");
     expect(callCount).toBe(2);
-    expect(rejectedToolMessage).toContain("累计自驾约 6.5 小时");
+    expect(rejectedToolMessage).toContain("累计自驾 390 分钟（约 6.5 小时）");
     const persisted = await prisma.trip.findUniqueOrThrow({
       where: { id: result.tripId! },
       include: { legs: { orderBy: { order: "asc" } } },
