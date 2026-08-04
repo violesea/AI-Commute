@@ -320,6 +320,32 @@ export function getTravelRouteStats(
   };
 }
 
+/**
+ * The structured route is the canonical source for the total self-drive
+ * duration. Model-authored transport summaries can describe a different
+ * aggregation, especially after a route is split across scenic stops.
+ */
+export function alignTravelPlanDrivingDuration(
+  plan: TravelPlan,
+  legs: readonly TravelRouteStatLeg[],
+  timeZone = "Asia/Shanghai"
+): TravelPlan {
+  const routeStats = getTravelRouteStats(legs, timeZone);
+  if (routeStats.totalDrivingMinutes <= 0) return plan;
+
+  return {
+    ...plan,
+    transport: {
+      ...plan.transport,
+      driving: {
+        ...plan.transport.driving,
+        durationMinutes: routeStats.totalDrivingMinutes,
+        summary: `按已落盘路线自驾约 ${routeStats.totalDrivingMinutes} 分钟`,
+      },
+    },
+  };
+}
+
 export function summarizeTravelRouteEvidence(
   legs: readonly {
     mode?: string | null;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   alignTravelPlanAttractionsWithRoute,
+  alignTravelPlanDrivingDuration,
   assertTravelPlanAttractionCoverage,
   assertTravelPlanOperationalCompleteness,
   completeTravelPlanArrayPayload,
@@ -675,6 +676,34 @@ describe("travel plan normalization", () => {
         { date: "2026-08-08", minutes: 262, legOrders: [1] },
         { date: "2026-08-10", minutes: 179, legOrders: [2] },
       ],
+    });
+  });
+
+  it("rewrites the transport self-drive total from structured route facts", () => {
+    const aligned = alignTravelPlanDrivingDuration(
+      normalizeTravelPlan(sampleTravelPlan),
+      [
+        {
+          order: 0,
+          routeMinutes: 262,
+          bufferMinutes: 15,
+          mode: "driving",
+          latestDepartAt: "2026-08-08T00:00:00.000Z",
+        },
+        {
+          order: 1,
+          routeMinutes: 179,
+          bufferMinutes: 12,
+          mode: "driving",
+          latestDepartAt: "2026-08-10T00:00:00.000Z",
+        },
+      ],
+      "Asia/Shanghai"
+    );
+
+    expect(aligned.transport.driving).toMatchObject({
+      durationMinutes: 441,
+      summary: "按已落盘路线自驾约 441 分钟",
     });
   });
 

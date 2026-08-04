@@ -403,7 +403,7 @@ describe("travel planning integration", () => {
     });
   });
 
-  it("adds a safety margin when a driving leg has no route evidence", async () => {
+  it("automatically captures provider evidence for coordinate-complete driving legs", async () => {
     const user = await prisma.user.create({
       data: {
         email: `travel-route-estimate-${Date.now()}@example.com`,
@@ -496,28 +496,20 @@ describe("travel planning integration", () => {
       persisted.legs[0]?.selectedCandidate?.sourceJson ?? "{}"
     );
 
-    expect(persisted.legs[0]?.selectedCandidate?.routeMinutes).toBe(90);
-    expect(persisted.legs[0]?.selectedCandidate?.totalMinutes).toBe(105);
-    expect(persisted.legs[0]?.bufferComponents).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          category: "route_evidence",
-          minutes: 15,
-        }),
-      ])
-    );
+    expect(persisted.legs[0]?.selectedCandidate?.routeMinutes).toBe(36);
+    expect(persisted.legs[0]?.selectedCandidate?.totalMinutes).toBe(90);
     expect(persistedPlan.routeEvidence).toMatchObject({
       totalDrivingLegs: 1,
-      verifiedDrivingLegs: 0,
-      estimatedDrivingLegs: 1,
-      safetyMarginMinutes: 15,
+      verifiedDrivingLegs: 1,
+      estimatedDrivingLegs: 0,
+      safetyMarginMinutes: 0,
     });
     expect(source.routeEvidence).toMatchObject({
-      source: "agent_estimate",
-      status: "estimated",
-      durationMinutes: 90,
+      source: "amap_route",
+      status: "provider_verified",
+      durationMinutes: 36,
       modelDurationMinutes: 90,
-      safetyMarginMinutes: 15,
+      safetyMarginMinutes: 0,
     });
   });
 

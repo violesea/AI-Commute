@@ -47,6 +47,7 @@ import type {
 } from "@/lib/trips/types";
 import {
   alignTravelPlanAttractionsWithRoute,
+  alignTravelPlanDrivingDuration,
   assertTravelPlanAttractionCoverage,
   assertTravelPlanBudget,
   assertTravelPlanOperationalCompleteness,
@@ -1831,6 +1832,75 @@ function routeEvidenceMatches(
   return originMatches && destinationMatches;
 }
 
+/**
+ * The model is encouraged to query every major route, but a successful
+ * create_trip must not depend on the model remembering that instruction.
+ * For coordinate-complete driving legs, fetch a provider route here as a
+ * best-effort evidence pass. Legs that lack usable endpoints or hit a
+ * provider error remain explicit estimates and receive the existing safety
+ * margin.
+ */
+async function ensureTravelDrivingRouteEvidence(
+  legs: PlannedTripLegInput[],
+  context: ToolExecutionContext
+) {
+  const existingEvidence = await loadTravelDrivingRouteEvidence(
+    context.sessionId
+  );
+
+  for (const leg of legs) {
+    if (!isTravelDrivingLeg(leg) || leg.routeMinutes <= 0) continue;
+    if (existingEvidence.some((candidate) => routeEvidenceMatches(leg, candidate))) {
+      continue;
+    }
+
+    const origin = normalizeLngLat(leg.originLngLat ?? "");
+    const destination = normalizeLngLat(leg.destinationLngLat ?? "");
+    if (!origin || !destination) continue;
+
+    const request = { origin, destination };
+    try {
+      const route = await recordCachedToolCall({
+        context,
+        name: "get_driving_route",
+        request,
+        run: async () => {
+          const result = await context.amap.getDrivingRoute(request);
+          return {
+            ...result,
+            origin,
+            destination,
+            requestedOrigin: leg.originName ?? origin,
+            requestedDestination: leg.destinationName ?? destination,
+          };
+        },
+      });
+
+      if (
+        Number.isFinite(route.durationMinutes) &&
+        route.durationMinutes > 0 &&
+        route.summary.trim()
+      ) {
+        existingEvidence.push({
+          origin,
+          destination,
+          requestedOrigin: leg.originName ?? origin,
+          requestedDestination: leg.destinationName ?? destination,
+          durationMinutes: Math.round(route.durationMinutes),
+          summary: route.summary,
+          observedAt: new Date().toISOString(),
+        });
+      }
+    } catch (error) {
+      assertAgentRunActive(context.signal);
+      // A provider outage must not discard an otherwise valid travel plan;
+      // annotateTravelRouteEvidence will retain the explicit estimate path.
+    }
+  }
+
+  return existingEvidence;
+}
+
 function estimatedRouteSafetyMargin(routeMinutes: number) {
   return Math.max(15, Math.min(45, Math.ceil(Math.max(1, routeMinutes) * 0.15)));
 }
@@ -1864,9 +1934,9 @@ function legBufferMinutes(leg: PlannedTripLegInput) {
 
 async function annotateTravelRouteEvidence(
   legs: PlannedTripLegInput[],
-  sessionId: string
+  context: ToolExecutionContext
 ) {
-  const evidence = await loadTravelDrivingRouteEvidence(sessionId);
+  const evidence = await ensureTravelDrivingRouteEvidence(legs, context);
   const usedEvidence = new Set<number>();
 
   const annotatedLegs = legs.map((leg) => {
@@ -2039,7 +2109,7 @@ async function normalizeCreateTripInput(
   if (context.purpose === "travel" && travelPlan) {
     const routeEvidence = await annotateTravelRouteEvidence(
       legs,
-      context.sessionId
+      context
     );
     legs = routeEvidence.legs;
     travelPlan = attachRouteEvidenceSummary(travelPlan, routeEvidence.evidence);
@@ -2064,8 +2134,21 @@ async function normalizeCreateTripInput(
           stops,
           legs,
           dateRange: undefined,
-        };
+      };
   if (context.purpose === "travel" && travelPlan) {
+    travelPlan = alignTravelPlanDrivingDuration(
+      travelPlan,
+      schedule.legs.map((leg, index) => ({
+        order: leg.order ?? index,
+        routeMinutes: leg.routeMinutes,
+        bufferMinutes: leg.bufferMinutes ?? 0,
+        totalMinutes: leg.totalMinutes,
+        mode: leg.mode,
+        latestDepartAt: leg.latestDepartAt,
+        targetArriveAt: leg.targetArriveAt,
+      })),
+      timezone
+    );
     const operationalTravelPlan = ensureTravelPlanRouteRiskCoverage(
       travelPlan,
       schedule.legs,
@@ -2272,7 +2355,7 @@ async function normalizeReplaceRouteInput(
   if (context.purpose === "travel" && travelPlan && legArgs) {
     const routeEvidence = await annotateTravelRouteEvidence(
       legs,
-      context.sessionId
+      context
     );
     legs = routeEvidence.legs;
     travelPlan = attachRouteEvidenceSummary(travelPlan, routeEvidence.evidence);
@@ -2313,6 +2396,19 @@ async function normalizeReplaceRouteInput(
           dateRange: undefined,
         };
   if (context.purpose === "travel" && travelPlan) {
+    travelPlan = alignTravelPlanDrivingDuration(
+      travelPlan,
+      schedule.legs.map((leg, index) => ({
+        order: leg.order ?? index,
+        routeMinutes: leg.routeMinutes,
+        bufferMinutes: leg.bufferMinutes ?? 0,
+        totalMinutes: leg.totalMinutes,
+        mode: leg.mode,
+        latestDepartAt: leg.latestDepartAt,
+        targetArriveAt: leg.targetArriveAt,
+      })),
+      current.trip.timezone
+    );
     const operationalTravelPlan = ensureTravelPlanRouteRiskCoverage(
       travelPlan,
       schedule.legs,
