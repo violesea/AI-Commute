@@ -6,7 +6,7 @@ skills_used:
 model_used: GPT-5
 model_source: visible_runtime
 created_at: 2026-08-03T00:00:00+08:00
-updated_at: 2026-08-04T15:41:54+08:00
+updated_at: 2026-08-04T16:03:06+08:00
 updated_by: codex
 ---
 
@@ -336,10 +336,12 @@ updated_by: codex
 
 实施与验证：同一线上行程的结构化 9 段 `routeMinutes` 合计为 1181 分钟；持久化 `travelPlan.transport.driving.durationMinutes` 和 `summary` 均被归一化为 1181 分钟，详情页的结构化路线事实、交通卡片和每日驾驶统计口径一致。模型首次提交的 1169 分钟未泄漏到持久化交通字段。问题关闭。
 
-## ISSUE-035 · quality · P1 · open
+## ISSUE-035 · quality · P1 · done
 
 自然类型覆盖摘要可能把未进入主路线的用户点名类型显示为“均已进入主路线”，与实际 stops 和备选清单冲突。
 
 证据：2026-08-04 行程 `cmsec8zlz002wpd0skjp0rvmq` 的实际主路线包含草原、湖泊、火山、湿地 4 个自然景点；山地景点“乌兰五台景区”明确列在“备选，不计入本次覆盖”。同一详情页又显示“用户点名自然类型：grassland、lake、wetland、volcanic、mountain；均已进入主路线”。
 
 验收：详情页的“均已进入主路线”只能在每个 requested natural type 都有对应的 planned attraction 和相邻 leg 时出现；存在未覆盖类型时，必须显示“未覆盖：mountain”及已记录的安全取舍原因，不能只依赖模型返回的 `unmetNaturalTypes`。
+
+实施与验证：提交 `1a0e18f` 让规范英文 `naturalType` 作为唯一自然类型，避免“平顶山”这类景点名称被错误追加为 `mountain`；`volcanic` 景点未再因名称含“山”被重复计类。新增服务端归一化回归测试和详情页未覆盖类型展示测试。线上会话 `cmsed6m330001mi0s1oto2uxa` 创建行程 `cmsedbvcz002kmi0squ50wwpe`，5 个用户点名自然类型均有对应主路线景点和相邻 leg，页面显示“均已进入主路线”与结构化 stops 一致；若类型缺失，定向 UI 测试确认显示“未覆盖：mountain”。
