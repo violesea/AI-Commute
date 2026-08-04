@@ -2822,7 +2822,7 @@ export function stringifyToolError(error: unknown) {
     (message.includes("日落") && message.includes("安全线"))
   ) {
     instruction =
-      "本次 create_trip 因白天驾驶安全线被拒绝。下一次调用必须实际改变对应 stops 和 legs：提前出发或提前返程并在安全线前到达，或增加途中住宿拆分路段，或缩短/删除远端景点；不能重复被拒的到达时间和路线。travelPlan 的天气、景点、住宿、美食、预算和避坑可以沿用，只需同步变更后的自驾路段天气风险。请立即重新调用完整 create_trip。";
+      "本次 create_trip 因白天驾驶安全线被拒绝。下一次调用必须实际改变对应 stops 和 legs：提前出发或提前返程并在安全线前到达，或增加途中住宿拆分路段，或缩短/删除非用户点名的远端景点；不能重复被拒的到达时间和路线。任何原始请求明确点名的自然类型（例如 lake、wetland、grassland、volcanic）必须至少保留一个已安排的真实景点，不能为修正日落而把它退回备选；优先减少停留时长、提前离开，或用已取证的同类型近距离景点替换。travelPlan 的天气、景点、住宿、美食、预算和避坑可以沿用，只需同步变更后的自驾路段天气风险。请立即重新调用完整 create_trip。";
     recovery = {
       constraintType: "daylight_driving",
       mustChange: ["stops", "legs", "对应路段的 travelPlan.weather.routeRisks"],
@@ -2835,6 +2835,7 @@ export function stringifyToolError(error: unknown) {
         "travelPlan.lodging",
         "travelPlan.food",
         "travelPlan.pitfalls",
+        "用户点名的自然类型至少各保留一个已安排景点",
       ],
     };
   } else if (

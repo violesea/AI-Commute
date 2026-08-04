@@ -47,6 +47,10 @@ describe("planning error display", () => {
       constraintType: "daylight_driving",
       mustChange: expect.arrayContaining(["stops", "legs"]),
     });
+    expect(daylight.instruction).toContain("不能为修正日落而把它退回备选");
+    expect(daylight.recovery.preserve).toContain(
+      "用户点名的自然类型至少各保留一个已安排景点"
+    );
     expect(daily.recovery).toMatchObject({
       constraintType: "daily_driving_limit",
       mustChange: expect.arrayContaining(["stops", "legs"]),
