@@ -6,7 +6,7 @@ skills_used:
 model_used: GPT-5
 model_source: visible_runtime
 created_at: 2026-08-03T00:00:00+08:00
-updated_at: 2026-08-04T14:56:28+08:00
+updated_at: 2026-08-04T15:34:04+08:00
 updated_by: codex
 ---
 
@@ -314,7 +314,7 @@ updated_by: codex
 
 实施与验证：自然景点归一化继续拒绝明显住宿实体；`cmse5srqw001qp80s9gwu766f` 线上详情页自然景点清单为火山、草原、九曲弯、湿地、森林，住宿单独展示，没有“锡林郭勒宾馆”等住宿名称混入自然景点统计。
 
-## ISSUE-033 · data-quality · P1 · open
+## ISSUE-033 · data-quality · P1 · done
 
 旅行模型可能为部分自驾 leg 直接估算 `routeMinutes`，但没有对应的独立驾车路线证据，导致分钟数和燃油/过路费预算不能完全追溯到地图结果。
 
@@ -324,10 +324,14 @@ updated_by: codex
 
 追加验证：本轮行程 `cmsean90w0024qo0sqcxjc6fa` 共 12 段自驾，仅 4 段为高德路线证据、8 段为模型估算；页面已明确标记估算段并加入 131 分钟安全余量，问题仍开放。
 
-## ISSUE-034 · data-quality · P2 · open
+实施与验证：提交 `f6c5905` 增加每个自驾 leg 的同起终点高德路线证据补查，并对高德 `10021/CUQPS` 限流按 1.1 秒等待后重试。2026-08-04 线上会话 `cmsec1t4u0003pd0sdekq46wc` 创建行程 `cmsec8zlz002wpd0skjp0rvmq` 时执行 23 次 `get_driving_route`；最终 9 个自驾 leg 的 `routeEvidence` 均为 `amap_route/provider_verified`，`verifiedDrivingLegs=9`、`estimatedDrivingLegs=0`、安全余量为 0。详情页显示 9/9 段高德路线已匹配。问题关闭。
+
+## ISSUE-034 · data-quality · P2 · done
 
 旅行计划保存的交通对比字段仍可能保留模型自报的自驾总时长，与结构化 stops/legs 的路线事实不一致。详情页已经优先显示结构化路线分钟，但数据库中的 `travelPlan.transport.driving.durationMinutes` 仍可能被后续消费者误读。
 
 证据：线上行程 `cmsean90w0024qo0sqcxjc6fa` 的 12 段结构化自驾 `routeMinutes` 合计为 1187 分钟，`routeEvidence` 为 4 段高德、8 段估算；同一行程保存的 `travelPlan.transport.driving.durationMinutes` 为 1336 分钟。详情页当前显示“自驾 1187 分钟（约 19.8 小时）”，因此用户界面已规避矛盾，但原始计划字段仍不一致。
 
 验收：路线证据归一化完成后，交通对比中的 `durationMinutes`、summary 和所有下游展示必须使用结构化 `totalDrivingMinutes`；若必须保留模型估算，必须显式标为模型估算，不能与路线事实共用无来源的总时长字段。
+
+实施与验证：同一线上行程的结构化 9 段 `routeMinutes` 合计为 1181 分钟；持久化 `travelPlan.transport.driving.durationMinutes` 和 `summary` 均被归一化为 1181 分钟，详情页的结构化路线事实、交通卡片和每日驾驶统计口径一致。模型首次提交的 1169 分钟未泄漏到持久化交通字段。问题关闭。
