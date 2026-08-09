@@ -27,6 +27,57 @@ function dateKeyInTimeZone(value: Date, timeZone: string) {
   }
 }
 
+/**
+ * Derive a driving risk level from AMap weather forecast text.
+ * Rain/storm/snow → high; wind/fog/haze → medium; clear/cloudy → low.
+ */
+function assessWeatherRisk(forecastText: string): {
+  risk: "low" | "medium" | "high";
+  summary: string;
+  drivingAdvice: string;
+} {
+  const text = forecastText.toLowerCase();
+
+  if (/暴雨|大雨|暴雪|大雪|雷暴|冰雹|沙尘暴|台风|rainstorm|heavy/.test(text)) {
+    return {
+      risk: "high",
+      summary: `${forecastText}，自驾风险高`,
+      drivingAdvice:
+        "建议推迟出发或改道；如必须出行，减速慢行，保持车距，避开积水/结冰路段。",
+    };
+  }
+
+  if (/小雨|中雨|阵雨|小雪|中雪|雨夹雪|light rain|moderate/.test(text)) {
+    return {
+      risk: "medium",
+      summary: `${forecastText}，路面湿滑需留意`,
+      drivingAdvice: "注意刹车距离延长，弯道减速，开启雾灯或近光灯。",
+    };
+  }
+
+  if (/大风|狂风|6级|7级|8级|strong wind|gale/.test(text)) {
+    return {
+      risk: "medium",
+      summary: `${forecastText}，注意侧风影响`,
+      drivingAdvice: "高速和空旷路段注意侧风，握稳方向盘，货车和SUV格外小心。",
+    };
+  }
+
+  if (/雾|霾|沙尘|fog|haze|smog|低能见/.test(text)) {
+    return {
+      risk: "medium",
+      summary: `${forecastText}，能见度较低`,
+      drivingAdvice: "开启雾灯和双闪，减速行驶，必要时驶入服务区等待。",
+    };
+  }
+
+  return {
+    risk: "low",
+    summary: `${forecastText}，路况良好`,
+    drivingAdvice: "正常驾驶，注意防晒和补充水分。",
+  };
+}
+
 export async function POST(request: Request, context: RouteContext) {
   const user = await getCurrentUser();
 
@@ -110,43 +161,140 @@ export async function POST(request: Request, context: RouteContext) {
     }
   }
 
-  // Refresh weather for the cities covered by this day's stops.
+  // ---- Generate per-leg route risks from AMap weather ----
   let weatherSummary: string | null = null;
-  const cities = new Set<string>();
-  for (const leg of dayLegs) {
-    if (leg.destinationName) cities.add(leg.destinationName);
-  }
-  // Use the first city as the weather query point (AMap needs a city name).
-  const primaryCity = [...cities][0];
-  if (primaryCity) {
-    try {
-      const weather = await amap.getWeather({ city: primaryCity });
-      weatherSummary = weather.summary || null;
+  const generatedRisks: Array<{
+    legOrder: number;
+    day?: number;
+    date?: string;
+    route: string;
+    summary: string;
+    risk: "low" | "medium" | "high";
+    drivingAdvice: string;
+    action: string;
+  }> = [];
 
-      // Update travelPlanJson weather.summary if we have a plan.
-      const currentPlan = parseTravelPlanJson(trip.travelPlanJson);
-      if (currentPlan && weatherSummary) {
-        const updatedPlan = {
-          ...currentPlan,
-          weather: {
-            ...currentPlan.weather,
-            summary: weatherSummary,
-            observedAt: new Date().toISOString(),
-          },
-        };
-        await prisma.trip.update({
-          where: { id: tripId },
-          data: { travelPlanJson: JSON.stringify(updatedPlan) },
+  // For each leg on this day, resolve the destination city and fetch weather.
+  const cityWeatherCache = new Map<string, string>();
+
+  for (const leg of dayLegs) {
+    let city: string | undefined;
+
+    // Resolve city via reverse geocode if we have coordinates.
+    if (leg.destinationLngLat) {
+      try {
+        const geo = await amap.reverseGeocode({
+          lngLat: leg.destinationLngLat,
         });
+        city = geo.city?.trim() || undefined;
+      } catch {
+        // Fall through to using the destination name.
       }
-    } catch {
-      // Weather refresh failure is non-fatal.
     }
+
+    if (!city && leg.destinationName) {
+      city = leg.destinationName;
+    }
+
+    if (!city) continue;
+
+    // Cache weather text per city to avoid duplicate calls.
+    let forecastText: string | undefined;
+    if (cityWeatherCache.has(city)) {
+      forecastText = cityWeatherCache.get(city);
+    } else {
+      try {
+        const weather = await amap.getWeather({ city });
+        const fc = weather.forecast?.find(
+          (f) => f.date === targetDate
+        );
+        forecastText =
+          fc?.dayWeather || fc?.summary || weather.summary || undefined;
+        cityWeatherCache.set(city, forecastText || "");
+
+        // Use the first city's overall summary.
+        if (!weatherSummary) {
+          weatherSummary = weather.summary || null;
+        }
+      } catch {
+        cityWeatherCache.set(city, "");
+      }
+    }
+
+    if (!forecastText) continue;
+
+    const assessed = assessWeatherRisk(forecastText);
+    const route =
+      [leg.originName, leg.destinationName].filter(Boolean).join("→") ||
+      `第 ${leg.order} 段`;
+
+    generatedRisks.push({
+      legOrder: leg.order,
+      date: targetDate,
+      route,
+      summary: assessed.summary,
+      risk: assessed.risk,
+      drivingAdvice: assessed.drivingAdvice,
+      action:
+        assessed.risk === "high"
+          ? "建议改期或改道出行"
+          : assessed.risk === "medium"
+            ? "谨慎驾驶，关注实时路况"
+            : "正常出行",
+    });
+  }
+
+  // Merge generated risks into travelPlanJson.weather.routeRisks.
+  const currentPlan = parseTravelPlanJson(trip.travelPlanJson);
+  if (currentPlan && generatedRisks.length > 0) {
+    const existingRisks = currentPlan.weather.routeRisks ?? [];
+    // Replace risks for legs we just refreshed; keep others.
+    const refreshedLegOrders = new Set(generatedRisks.map((r) => r.legOrder));
+    const keptRisks = existingRisks.filter(
+      (r) => !refreshedLegOrders.has(r.legOrder ?? -1)
+    );
+    const mergedRisks = [...keptRisks, ...generatedRisks].sort(
+      (a, b) => (a.legOrder ?? 0) - (b.legOrder ?? 0)
+    );
+
+    const updatedPlan = {
+      ...currentPlan,
+      weather: {
+        ...currentPlan.weather,
+        routeRisks: mergedRisks,
+        ...(weatherSummary
+          ? {
+              summary: weatherSummary,
+              observedAt: new Date().toISOString(),
+            }
+          : {}),
+      },
+    };
+
+    await prisma.trip.update({
+      where: { id: tripId },
+      data: { travelPlanJson: JSON.stringify(updatedPlan) },
+    });
+  } else if (currentPlan && weatherSummary) {
+    // No driving legs but still update the weather summary.
+    const updatedPlan = {
+      ...currentPlan,
+      weather: {
+        ...currentPlan.weather,
+        summary: weatherSummary,
+        observedAt: new Date().toISOString(),
+      },
+    };
+    await prisma.trip.update({
+      where: { id: tripId },
+      data: { travelPlanJson: JSON.stringify(updatedPlan) },
+    });
   }
 
   return NextResponse.json({
     date: targetDate,
     updatedLegs,
+    generatedRisks: generatedRisks.length,
     weatherSummary,
     refreshedAt: new Date().toISOString(),
   });
