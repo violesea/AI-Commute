@@ -13,6 +13,7 @@ import { GlassCard } from "@/components/glass-card";
 import { BufferList } from "@/components/trips/buffer-list";
 import { MonitoringActions } from "@/components/trips/monitoring-actions";
 import { RouteTimeline } from "@/components/trips/route-timeline";
+import { ItineraryFlow, type ItineraryFlowLeg } from "@/components/trips/itinerary-flow";
 import { TravelPlanCard } from "@/components/trips/travel-plan-card";
 import { TripDeleteButton } from "@/components/trips/trip-delete-button";
 import { TripShareButton } from "@/components/trips/trip-share-button";
@@ -308,6 +309,23 @@ export default async function TripDetailPage({
       targetArriveAt: leg.targetArriveAt ?? undefined,
     };
   });
+  const itineraryLegs: ItineraryFlowLeg[] = trip.legs.map((leg) => {
+    const candidate =
+      leg.selectedCandidate ??
+      leg.routeCandidates.find((routeCandidate) => routeCandidate.selected) ??
+      leg.routeCandidates[0];
+    return {
+      order: leg.order,
+      originName: leg.originName ?? undefined,
+      destinationName: leg.destinationName ?? undefined,
+      routeMinutes: candidate?.routeMinutes ?? 0,
+      mode: candidate?.mode,
+      bufferMinutes: candidate?.bufferMinutes,
+      totalMinutes: candidate?.totalMinutes,
+      latestDepartAt: leg.latestDepartAt?.toISOString() ?? null,
+      targetArriveAt: leg.targetArriveAt?.toISOString() ?? null,
+    };
+  });
   const displayTravelPlan = parsedTravelPlan
     ? alignTravelPlanPitfallsWithSchedule(
         parsedTravelPlan,
@@ -378,6 +396,8 @@ export default async function TripDetailPage({
             plan={travelPlan}
             routeStats={isTravelTrip ? routeStats : undefined}
             itineraryDateRange={itineraryDateRange}
+            hideRouteRisks={isTravelTrip}
+            showOnlyAlternativeAttractions={isTravelTrip}
           />
         ) : null}
 
@@ -430,9 +450,22 @@ export default async function TripDetailPage({
         </GlassCard>
 
         <GlassCard className="p-5">
-          <h2 className="text-lg font-bold text-[#191c1e]">路线分段</h2>
+          <h2 className="text-lg font-bold text-[#191c1e]">
+            {isTravelTrip ? "行程流" : "路线分段"}
+          </h2>
           <div className="mt-3">
-            <RouteTimeline groups={routeGroups} />
+            {isTravelTrip && travelPlan ? (
+              <ItineraryFlow
+                stops={displayRouteStops}
+                legs={itineraryLegs}
+                attractions={travelPlan.attractions}
+                routeRisks={travelPlan.weather.routeRisks}
+                forecast={travelPlan.weather.forecast}
+                timezone={tripTimeZone}
+              />
+            ) : (
+              <RouteTimeline groups={routeGroups} />
+            )}
           </div>
         </GlassCard>
 

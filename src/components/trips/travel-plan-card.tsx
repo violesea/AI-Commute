@@ -212,10 +212,14 @@ export function TravelPlanCard({
   plan,
   routeStats,
   itineraryDateRange,
+  hideRouteRisks = false,
+  showOnlyAlternativeAttractions = false,
 }: {
   plan: TravelPlan;
   routeStats?: TravelRouteStats;
   itineraryDateRange?: TravelWeatherDateRange;
+  hideRouteRisks?: boolean;
+  showOnlyAlternativeAttractions?: boolean;
 }) {
   return (
     <div className="space-y-5">
@@ -418,7 +422,7 @@ export function TravelPlanCard({
             </div>
           </div>
         ) : null}
-        {plan.weather.routeRisks?.length ? (
+        {!hideRouteRisks && plan.weather.routeRisks?.length ? (
           <div className="mt-3 rounded-2xl border border-[#fdba74]/55 bg-[#fff7ed] p-4">
             <p className="text-sm font-bold text-[#7c2d12]">自驾路段天气风险</p>
             <div className="mt-3 space-y-2">
@@ -554,25 +558,47 @@ export function TravelPlanCard({
       <GlassCard className="p-5">
         <div className="flex items-center gap-2">
           <MapPin aria-hidden="true" className="size-5 text-[#2563eb]" />
-          <h2 className="text-lg font-bold text-[#191c1e]">景点推荐与理由</h2>
+          <h2 className="text-lg font-bold text-[#191c1e]">
+            {showOnlyAlternativeAttractions ? "备选景点" : "景点推荐与理由"}
+          </h2>
         </div>
-        <div className="mt-3 rounded-2xl border border-[#93c5fd]/55 bg-[#eff6ff] px-4 py-3 text-xs leading-5 text-[#1e40af]">
-          <p className="font-bold">
-            本次路线已安排 {plan.attractions.filter((attraction) => attraction.routeStatus === "planned").length} 个景点，备选 / 顺路可选 {plan.attractions.filter((attraction) => attraction.routeStatus !== "planned").length} 个景点。
-          </p>
-          <p className="mt-1">
-            “已安排”只认结构化 stops 和关联路线段；未进入实际路线的推荐仅供调整行程时选择，不计入本次覆盖。
-          </p>
-        </div>
+        {showOnlyAlternativeAttractions ? (
+          <div className="mt-3 rounded-2xl border border-[#93c5fd]/55 bg-[#eff6ff] px-4 py-3 text-xs leading-5 text-[#1e40af]">
+            <p className="font-bold">
+              已进入行程流的景点不再重复列出；以下是未纳入本次主路线的备选景点，调整行程时可参考。
+            </p>
+          </div>
+        ) : (
+          <div className="mt-3 rounded-2xl border border-[#93c5fd]/55 bg-[#eff6ff] px-4 py-3 text-xs leading-5 text-[#1e40af]">
+            <p className="font-bold">
+              本次路线已安排 {plan.attractions.filter((attraction) => attraction.routeStatus === "planned").length} 个景点，备选 / 顺路可选 {plan.attractions.filter((attraction) => attraction.routeStatus !== "planned").length} 个景点。
+            </p>
+            <p className="mt-1">
+              “已安排”只认结构化 stops 和关联路线段；未进入实际路线的推荐仅供调整行程时选择，不计入本次覆盖。
+            </p>
+          </div>
+        )}
         <div className="mt-4 grid gap-4 md:grid-cols-2">
           <AttractionList
-            attractions={plan.attractions}
+            attractions={
+              showOnlyAlternativeAttractions
+                ? plan.attractions.filter(
+                    (attraction) => attraction.routeStatus !== "planned"
+                  )
+                : plan.attractions
+            }
             category="natural"
             icon={<Trees aria-hidden="true" className="size-5 text-[#0f9f6e]" />}
             title="自然景观"
           />
           <AttractionList
-            attractions={plan.attractions}
+            attractions={
+              showOnlyAlternativeAttractions
+                ? plan.attractions.filter(
+                    (attraction) => attraction.routeStatus !== "planned"
+                  )
+                : plan.attractions
+            }
             category="cultural"
             icon={<Landmark aria-hidden="true" className="size-5 text-[#7c3aed]" />}
             title="人文历史"

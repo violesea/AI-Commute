@@ -1505,6 +1505,23 @@ export function alignTravelPlanAttractionsWithRoute(
   };
 }
 
+/**
+ * Checks whether an attraction is located at the given route stop, using the
+ * same name/coordinate matching that powers routeStatus assignment. Exposed so
+ * the itinerary flow can associate attractions with the stop where they are
+ * visited without reimplementing the fuzzy matching.
+ */
+export function attractionMatchesStop(
+  attraction: TravelAttraction,
+  stop: TravelPlanRouteStop
+) {
+  if (isGenericRouteStop(stop, attraction)) return false;
+  return (
+    samePlace(attraction.name, stop.name) ||
+    sameLngLatWithin(attraction.lngLat, stop.lngLat, 250)
+  );
+}
+
 function readPayloadOption(value: unknown) {
   return isRecord(value) ? value : {};
 }
