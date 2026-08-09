@@ -52,6 +52,12 @@ export type PlanningSessionResult = {
   sessionId: string;
   status: AgentSessionStatus;
   tripId: string | null;
+  tripIds?: string[];
+};
+
+export type TravelRouteTheme = {
+  label: string;
+  focus: string;
 };
 
 export type PlanningAttemptResult = {

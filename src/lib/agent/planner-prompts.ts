@@ -54,7 +54,8 @@ export async function createInitialMessages(
     userId: string;
     purpose: string;
   },
-  attempt: number
+  attempt: number,
+  theme?: { label: string; focus: string }
 ) {
   const memoryContext = await buildConfirmedMemoryContext(session.userId);
   const sessionContextMessages = await prisma.agentMessage.findMany({
@@ -73,7 +74,9 @@ export async function createInitialMessages(
     })),
     {
       role: "user",
-      content: `第 ${attempt} 次规划尝试：${session.prompt}`,
+      content: theme
+        ? `第 ${attempt} 次规划尝试（${theme.label}）：${session.prompt}\n\n本次规划主题：${theme.label}。${theme.focus}。请严格按此主题的侧重规划一条完整路线，包括景点类型、节奏、交通方式偏好都应体现该主题特色。`
+        : `第 ${attempt} 次规划尝试：${session.prompt}`,
     },
   ];
 

@@ -178,6 +178,21 @@ async function ensureTravelPlanMigration() {
   }
 }
 
+async function ensureRouteThemesMigration() {
+  const columns = await prisma.$queryRawUnsafe<Array<{ name: string }>>(
+    "PRAGMA table_info('AgentSession')"
+  );
+  const hasSelectedTripId = columns.some(
+    (column) => column.name === "selectedTripId"
+  );
+
+  if (!hasSelectedTripId) {
+    await executeMigration(
+      "prisma/migrations/20260809104245_add_route_themes_and_selected_trip/migration.sql"
+    );
+  }
+}
+
 async function ensureUniqueTelegramChatIds() {
   const settings = await prisma.userSettings.findMany({
     where: { telegramChatId: { not: null } },
@@ -236,6 +251,7 @@ export async function ensureTestDatabase() {
       await ensureUserModelMigration();
       await ensureTripShareMigration();
       await ensureTravelPlanMigration();
+      await ensureRouteThemesMigration();
     }
   });
 

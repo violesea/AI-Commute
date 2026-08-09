@@ -25,6 +25,7 @@ import type {
   PlanningAttemptResult,
   PlanningSessionResult,
   StartPlanningSessionInput,
+  TravelRouteTheme,
 } from "@/lib/agent/types";
 import {
   AgentRunTimeoutError,
@@ -124,6 +125,8 @@ export type TravelEvidenceBudget = {
 export type RunPlanningSessionOptions = {
   chatClient?: AgentChatClient;
   amapClient?: AmapClient;
+  /** Skip multi-route theme generation; produce a single trip. For tests. */
+  singleRoute?: boolean;
 };
 
 export type ToolExecutionContext = {
@@ -1525,11 +1528,110 @@ export async function startPlanningSession({
   });
 }
 
+const FALLBACK_TRAVEL_THEMES: TravelRouteTheme[] = [
+  { label: "经典全景环线", focus: "覆盖目的地最具代表性的自然与人文景点，节奏适中，适合首次到访" },
+  { label: "深度人文自然", focus: "避开热门打卡点，深入当地文化与小众自然景观，体验更沉浸" },
+  { label: "摄影与避暑专线", focus: "选取人少景美、光线条件好的时段与地点，适合摄影与休闲" },
+];
+
+async function generateTravelThemes(
+  prompt: string,
+  chatClient: AgentChatClient
+): Promise<TravelRouteTheme[]> {
+  const themePrompt = `You are a travel route strategist. Based on the following travel request, propose 3 distinctly different route themes. Each theme must have a different emphasis (e.g. classic must-see, off-the-beaten-path culture, photography/leisure, adventure, food-focused, etc.). Return ONLY a JSON array of exactly 3 objects, each with "label" (a short Chinese name like "经典全景环线") and "focus" (one Chinese sentence describing the theme's distinguishing angle). The 3 themes must be genuinely different in scenery type, pace, and transport preference.
+
+Travel request: ${prompt}`;
+
+  try {
+    const result = await chatClient.complete({
+      messages: [
+        { role: "system", content: "You are a JSON-only API. Return a JSON array, no prose, no markdown." },
+        { role: "user", content: themePrompt },
+      ],
+      tools: [],
+      model: TRAVEL_PLANNING_MODEL,
+      purpose: "travel",
+    });
+    const raw = result.message.content?.trim() ?? "";
+    const jsonMatch = raw.match(/\[[\s\S]*\]/);
+    const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length < 2) {
+      throw new Error("insufficient themes");
+    }
+    const themes: TravelRouteTheme[] = parsed
+      .slice(0, 3)
+      .filter(
+        (item): item is TravelRouteTheme =>
+          item &&
+          typeof item === "object" &&
+          typeof item.label === "string" &&
+          typeof item.focus === "string"
+      )
+      .map((item) => ({ label: item.label, focus: item.focus }));
+    return themes.length >= 2 ? themes : FALLBACK_TRAVEL_THEMES;
+  } catch {
+    return FALLBACK_TRAVEL_THEMES;
+  }
+}
+
 export async function runPlanningSession(
   sessionId: string,
   options: RunPlanningSessionOptions = {}
 ): Promise<PlanningSessionResult> {
+  const session = await prisma.agentSession.findUniqueOrThrow({
+    where: { id: sessionId },
+  });
+  const isTravel = session.purpose === "travel";
+
   try {
+    if (isTravel && !options.singleRoute) {
+      const chatClient = options.chatClient ?? createOpenAiChatClient();
+      const themes = await generateTravelThemes(session.prompt, chatClient);
+      await prisma.agentSession.update({
+        where: { id: sessionId },
+        data: { routeThemesJson: JSON.stringify(themes) },
+      });
+
+      const tripIds: string[] = [];
+      for (const [index, theme] of themes.entries()) {
+        try {
+          const result = await runWithTimeoutAndRetry({
+            timeoutMs: SESSION_TIMEOUT_MS,
+            maxAttempts: SESSION_MAX_ATTEMPTS,
+            run: async ({ attempt, signal }) =>
+              runPlanningAttempt(sessionId, attempt, signal, options, {
+                theme,
+                themeOrder: index,
+              }),
+          });
+          if (result.value.tripId) {
+            tripIds.push(result.value.tripId);
+          }
+        } catch {
+          // A single theme failing should not abort the remaining themes.
+        }
+      }
+
+      if (tripIds.length === 0) {
+        throw new Error("所有主题路线规划均失败。");
+      }
+
+      await prisma.agentSession.update({
+        where: { id: sessionId },
+        data: {
+          status: "completed",
+          tripId: tripIds[0],
+        },
+      });
+
+      return {
+        sessionId,
+        status: "completed",
+        tripId: tripIds[0],
+        tripIds,
+      };
+    }
+
     const result = await runWithTimeoutAndRetry({
       timeoutMs: SESSION_TIMEOUT_MS,
       maxAttempts: SESSION_MAX_ATTEMPTS,
@@ -1550,6 +1652,7 @@ export async function runPlanningSession(
       sessionId,
       status: "completed",
       tripId: result.value.tripId,
+      tripIds: [result.value.tripId],
     };
   } catch (error) {
     const timedOut = error instanceof AgentRunTimeoutError;
@@ -1724,7 +1827,8 @@ export async function runPlanningAttempt(
   sessionId: string,
   attempt = 1,
   signal?: AbortSignal,
-  options: RunPlanningSessionOptions = {}
+  options: RunPlanningSessionOptions = {},
+  variantOptions?: { theme?: TravelRouteTheme; themeOrder?: number }
 ): Promise<PlanningAttemptResult> {
   assertAgentRunActive(signal);
   const session = await prisma.agentSession.findUniqueOrThrow({
@@ -1745,12 +1849,18 @@ export async function runPlanningAttempt(
       session.prompt
     ),
   };
-  const messages = await createInitialMessages(session, attempt);
+  const messages = await createInitialMessages(
+    session,
+    attempt,
+    variantOptions?.theme
+  );
 
   await createAssistantMessage({
     sessionId,
     signal,
-    content: `第 ${attempt} 次规划尝试：AI 可以持续调用工具，直到创建最终行程。`,
+    content: variantOptions?.theme
+      ? `第 ${attempt} 次规划尝试（${variantOptions.theme.label}）：AI 可以持续调用工具，直到创建最终行程。`
+      : `第 ${attempt} 次规划尝试：AI 可以持续调用工具，直到创建最终行程。`,
   });
 
   const result = await runConversationAttempt({

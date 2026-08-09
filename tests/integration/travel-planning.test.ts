@@ -270,6 +270,7 @@ describe("travel planning integration", () => {
     const result = await runPlanningSession(session.id, {
       amapClient: createMockAmapClient(),
       chatClient,
+      singleRoute: true,
     });
 
     expect(result.status).toBe("completed");
@@ -371,6 +372,7 @@ describe("travel planning integration", () => {
     const result = await runPlanningSession(session.id, {
       amapClient: createMockAmapClient(),
       chatClient,
+      singleRoute: true,
     });
 
     expect(result.status).toBe("completed");
@@ -605,6 +607,7 @@ describe("travel planning integration", () => {
     const result = await runPlanningSession(session.id, {
       amapClient: createMockAmapClient(),
       chatClient,
+      singleRoute: true,
     });
 
     expect(result.status).toBe("completed");
@@ -716,6 +719,7 @@ describe("travel planning integration", () => {
     const result = await runPlanningSession(session.id, {
       amapClient: createMockAmapClient(),
       chatClient,
+      singleRoute: true,
     });
 
     expect(result.status).toBe("completed");
@@ -826,6 +830,7 @@ describe("travel planning integration", () => {
     const result = await runPlanningSession(session.id, {
       amapClient: createMockAmapClient(),
       chatClient,
+      singleRoute: true,
     });
 
     expect(result.status).toBe("completed");
@@ -967,6 +972,7 @@ describe("travel planning integration", () => {
     const result = await runPlanningSession(session.id, {
       amapClient: createMockAmapClient(),
       chatClient,
+      singleRoute: true,
     });
 
     expect(result.status).toBe("completed");
@@ -1117,6 +1123,7 @@ describe("travel planning integration", () => {
     const result = await runPlanningSession(session.id, {
       amapClient: createMockAmapClient(),
       chatClient,
+      singleRoute: true,
     });
 
     expect(result.status).toBe("completed");
@@ -1208,6 +1215,7 @@ describe("travel planning integration", () => {
     const result = await runPlanningSession(session.id, {
       amapClient: createMockAmapClient(),
       chatClient,
+      singleRoute: true,
     });
 
     expect(result.status).toBe("completed");
@@ -1317,6 +1325,7 @@ describe("travel planning integration", () => {
     const result = await runPlanningSession(session.id, {
       amapClient: createMockAmapClient(),
       chatClient,
+      singleRoute: true,
     });
 
     expect(result.status).toBe("completed");
@@ -1418,6 +1427,7 @@ describe("travel planning integration", () => {
     const result = await runPlanningSession(session.id, {
       amapClient: createMockAmapClient(),
       chatClient,
+      singleRoute: true,
     });
 
     expect(result.status).toBe("failed");
@@ -1481,6 +1491,7 @@ describe("travel planning integration", () => {
     const result = await runPlanningSession(session.id, {
       amapClient: createMockAmapClient(),
       chatClient,
+      singleRoute: true,
     });
 
     expect(result.status).toBe("failed");

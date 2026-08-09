@@ -282,6 +282,24 @@ export default async function TripDetailPage({
     now,
   });
   const agentSessionId = trip.agentSessions[0]?.id ?? trip.agentSessionId;
+
+  // Fetch sibling trips from the same planning session (multi-route variants).
+  const variantTrips = agentSessionId
+    ? await prisma.trip.findMany({
+        where: {
+          agentSessionId,
+          id: { not: trip.id },
+          userId: user.id,
+        },
+        select: {
+          id: true,
+          title: true,
+          finalStopName: true,
+          status: true,
+        },
+        orderBy: { createdAt: "asc" },
+      })
+    : [];
   const itineraryDateRange = isTravelTrip
     ? inferItineraryDateRange(trip.rawPrompt, trip.legs, tripTimeZone)
     : undefined;
@@ -390,6 +408,21 @@ export default async function TripDetailPage({
             </div>
           </div>
         </header>
+
+        {variantTrips.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-[#93c5fd]/55 bg-[#eff6ff] px-4 py-3">
+            <span className="text-xs font-bold text-[#1e40af]">其他路线：</span>
+            {variantTrips.map((variant, index) => (
+              <Link
+                className="rounded-full bg-white/70 px-3 py-1.5 text-xs font-bold text-[#2563eb] transition hover:bg-white"
+                href={`/trips/${variant.id}`}
+                key={variant.id}
+              >
+                路线 {index + 2} · {variant.finalStopName ?? variant.title}
+              </Link>
+            ))}
+          </div>
+        ) : null}
 
         {travelPlan ? (
           <TravelPlanCard
