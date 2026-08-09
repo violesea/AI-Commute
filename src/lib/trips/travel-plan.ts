@@ -1614,8 +1614,29 @@ export function completeTravelPlanArrayPayload(
   const completed = { ...plan };
 
   for (const field of TRAVEL_PLAN_ARRAY_FIELDS) {
-    if (!Array.isArray(completed[field]) && Array.isArray(fallback[field])) {
-      completed[field] = fallback[field];
+    const planArray = completed[field];
+    const fallbackArray = fallback[field];
+
+    if (!Array.isArray(planArray) && Array.isArray(fallbackArray)) {
+      completed[field] = fallbackArray;
+    } else if (
+      Array.isArray(planArray) &&
+      Array.isArray(fallbackArray) &&
+      field === "attractions"
+    ) {
+      // When both travelPlan and top-level siblings have attractions, merge by
+      // name so the model can add a cultural attraction as a top-level sibling
+      // without it being silently dropped.
+      const existingNames = new Set(
+        planArray
+          .map((item) => normalizePlaceName(item?.name))
+          .filter(Boolean)
+      );
+      const additions = fallbackArray.filter((item) => {
+        const name = normalizePlaceName(item?.name);
+        return !name || !existingNames.has(name);
+      });
+      completed[field] = [...planArray, ...additions];
     }
   }
 
