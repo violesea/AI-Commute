@@ -58,6 +58,7 @@ export type DayCardProps = {
   pitfalls: TravelPitfall[];
   weatherRisk?: TravelWeatherRouteRisk;
   weatherSummary?: string;
+  withinForecastRange?: boolean;
   timezone: string;
   tripId: string;
 };
@@ -122,6 +123,7 @@ export function DayCard({
   pitfalls,
   weatherRisk,
   weatherSummary,
+  withinForecastRange = true,
   timezone,
   tripId,
 }: DayCardProps) {
@@ -208,7 +210,14 @@ export function DayCard({
       </div>
 
       {/* Weather */}
-      {activeSummary || activeRisk ? (
+      {!withinForecastRange ? (
+        <div className="mt-3 flex items-start gap-2 rounded-xl bg-[#fff7ed] px-3 py-2">
+          <CloudSun aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-[#ea580c]" />
+          <p className="text-xs leading-5 text-[#9a3412]">
+            天气预报仅覆盖未来 3 天，此日天气请临近出发时点击刷新获取。
+          </p>
+        </div>
+      ) : activeSummary || activeRisk ? (
         <div className="mt-3 flex items-start gap-2 rounded-xl bg-[#f0f7ff] px-3 py-2">
           <CloudSun aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-[#2563eb]" />
           <div className="min-w-0">

@@ -456,6 +456,16 @@ export default async function TripDetailPage({
       group.legs.some((leg) => leg.order === risk.legOrder)
     );
 
+    // Weather APIs (AMap, Caiyun free) only cover ~3 days ahead. Days beyond
+    // that should not show a misleading risk badge — tell the user to refresh
+    // closer to departure.
+    const todayKey = dateKeyInTimeZone(now, tripTimeZone) ?? "";
+    const dayOffset = Math.round(
+      (new Date(group.date).getTime() - new Date(todayKey).getTime()) /
+        86_400_000
+    );
+    const withinForecastRange = dayOffset <= 3;
+
     // Filter lodging/food/pitfalls to this day.
     const dayNum = dayIndex + 1;
     const stopNames = dayStops.map((s) => s.name);
@@ -498,6 +508,7 @@ export default async function TripDetailPage({
       stops: dayStops,
       weatherRisk: dayRisk,
       weatherSummary: dayIndex === 0 ? travelPlan?.weather.summary : undefined,
+      withinForecastRange,
       lodging: dayLodging,
       food: dayFood,
       pitfalls: dayPitfalls,
@@ -633,6 +644,7 @@ export default async function TripDetailPage({
                 tripId={trip.id}
                 weatherRisk={day.weatherRisk}
                 weatherSummary={day.weatherSummary}
+                withinForecastRange={day.withinForecastRange}
               />
             ))}
           </div>
