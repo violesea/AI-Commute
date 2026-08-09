@@ -465,6 +465,9 @@ export default async function TripDetailPage({
         86_400_000
     );
     const withinForecastRange = dayOffset <= 3;
+    const dayForecast = travelPlan?.weather.forecast?.find(
+      (f) => f.date === group.date || f.day === dayNum
+    );
 
     // Filter lodging/food/pitfalls to this day.
     const dayNum = dayIndex + 1;
@@ -508,6 +511,7 @@ export default async function TripDetailPage({
       stops: dayStops,
       weatherRisk: dayRisk,
       weatherSummary: dayIndex === 0 ? travelPlan?.weather.summary : undefined,
+      forecast: withinForecastRange ? dayForecast : undefined,
       withinForecastRange,
       lodging: dayLodging,
       food: dayFood,
@@ -635,6 +639,7 @@ export default async function TripDetailPage({
                 date={day.date}
                 dayNumber={day.dayNumber}
                 food={day.food}
+                forecast={day.forecast}
                 key={day.date}
                 legs={day.legs}
                 lodging={day.lodging}

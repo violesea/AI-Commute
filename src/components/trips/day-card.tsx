@@ -17,6 +17,7 @@ import type {
   TravelFood,
   TravelLodging,
   TravelPitfall,
+  TravelWeatherForecast,
   TravelWeatherRouteRisk,
 } from "@/lib/trips/travel-plan";
 import { attractionMatchesStop } from "@/lib/trips/travel-plan";
@@ -58,6 +59,7 @@ export type DayCardProps = {
   pitfalls: TravelPitfall[];
   weatherRisk?: TravelWeatherRouteRisk;
   weatherSummary?: string;
+  forecast?: TravelWeatherForecast;
   withinForecastRange?: boolean;
   timezone: string;
   tripId: string;
@@ -123,6 +125,7 @@ export function DayCard({
   pitfalls,
   weatherRisk,
   weatherSummary,
+  forecast,
   withinForecastRange = true,
   timezone,
   tripId,
@@ -217,13 +220,24 @@ export function DayCard({
             天气预报仅覆盖未来 3 天，此日天气请临近出发时点击刷新获取。
           </p>
         </div>
-      ) : activeSummary || activeRisk ? (
+      ) : forecast || activeSummary || activeRisk ? (
         <div className="mt-3 flex items-start gap-2 rounded-xl bg-[#f0f7ff] px-3 py-2">
           <CloudSun aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-[#2563eb]" />
-          <div className="min-w-0">
-            {activeSummary ? (
+          <div className="min-w-0 flex-1">
+            {/* Concrete weather data: temperature, conditions, wind */}
+            {forecast?.summary ? (
+              <p className="text-xs font-bold leading-5 text-[#1e40af]">
+                {forecast.summary}
+              </p>
+            ) : activeSummary ? (
               <p className="text-xs leading-5 text-[#1e40af]">{activeSummary}</p>
             ) : null}
+            {forecast?.location ? (
+              <p className="mt-0.5 text-[10px] text-[#5b6072]">
+                📍 {forecast.location}
+              </p>
+            ) : null}
+            {/* Risk badge + driving advice */}
             {activeRisk ? (
               <div className="mt-1 flex items-center gap-2">
                 <span
@@ -238,7 +252,12 @@ export function DayCard({
             ) : null}
             {activeRisk?.drivingAdvice ? (
               <p className="mt-0.5 text-[11px] leading-4 text-[#5b6072]">
-                {activeRisk.drivingAdvice}
+                🚗 {activeRisk.drivingAdvice}
+              </p>
+            ) : null}
+            {forecast?.outdoorAdvice ? (
+              <p className="mt-0.5 text-[11px] leading-4 text-[#5b6072]">
+                🌿 {forecast.outdoorAdvice}
               </p>
             ) : null}
           </div>
