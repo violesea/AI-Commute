@@ -465,12 +465,12 @@ export default async function TripDetailPage({
         86_400_000
     );
     const withinForecastRange = dayOffset <= 3;
+    const dayNum = dayIndex + 1;
     const dayForecast = travelPlan?.weather.forecast?.find(
       (f) => f.date === group.date || f.day === dayNum
     );
 
     // Filter lodging/food/pitfalls to this day.
-    const dayNum = dayIndex + 1;
     const stopNames = dayStops.map((s) => s.name);
     const dayLodging = travelPlan
       ? travelPlan.lodging.filter((item) =>
