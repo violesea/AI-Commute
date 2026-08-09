@@ -208,13 +208,16 @@ export async function POST(request: Request, context: RouteContext) {
         const fc = weather.forecast?.find(
           (f) => f.date === targetDate
         );
-        forecastText =
+        const raw =
           fc?.dayWeather || fc?.summary || weather.summary || undefined;
+        // If AMap returns no real data ("暂无天气信息" etc.), treat as unknown.
+        if (raw && !/暂无|无天气|无预报|no data/i.test(raw)) {
+          forecastText = raw;
+        }
         cityWeatherCache.set(city, forecastText || "");
 
-        // Use the first city's overall summary.
-        if (!weatherSummary) {
-          weatherSummary = weather.summary || null;
+        if (!weatherSummary && weather.summary && !/暂无/.test(weather.summary)) {
+          weatherSummary = weather.summary;
         }
       } catch {
         cityWeatherCache.set(city, "");
@@ -295,6 +298,7 @@ export async function POST(request: Request, context: RouteContext) {
     date: targetDate,
     updatedLegs,
     generatedRisks: generatedRisks.length,
+    routeRisks: generatedRisks,
     weatherSummary,
     refreshedAt: new Date().toISOString(),
   });

@@ -129,6 +129,8 @@ export function DayCard({
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
   const [refreshError, setRefreshError] = useState("");
   const [legOverrides, setLegOverrides] = useState<Record<number, number>>({});
+  const [riskOverride, setRiskOverride] = useState<TravelWeatherRouteRisk | null>(null);
+  const [summaryOverride, setSummaryOverride] = useState<string | null>(null);
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -151,6 +153,21 @@ export function DayCard({
         }
         setLegOverrides(overrides);
       }
+      // Update weather risk from generated risks — pick the highest risk
+      // among the refreshed legs to display as the day's risk badge.
+      if (data.routeRisks && data.routeRisks.length > 0) {
+        const priority = { high: 3, medium: 2, low: 1 };
+        const worst = data.routeRisks.reduce((prev: TravelWeatherRouteRisk, curr: TravelWeatherRouteRisk) =>
+          (priority[curr.risk as keyof typeof priority] ?? 0) >
+          (priority[prev.risk as keyof typeof priority] ?? 0)
+            ? curr
+            : prev
+        );
+        setRiskOverride(worst);
+      }
+      if (data.weatherSummary) {
+        setSummaryOverride(data.weatherSummary);
+      }
       setRefreshedAt(data.refreshedAt);
     } catch (err) {
       setRefreshError(err instanceof Error ? err.message : "刷新失败");
@@ -159,7 +176,10 @@ export function DayCard({
     }
   }
 
-  const tone = weatherRisk ? riskTone(weatherRisk.risk) : null;
+  const activeRisk = riskOverride ?? weatherRisk;
+  const activeSummary = summaryOverride ?? weatherSummary;
+
+  const tone = activeRisk ? riskTone(activeRisk.risk) : null;
 
   return (
     <section className="rounded-2xl border border-[#c3c6d7]/40 bg-white/75 p-4 shadow-sm">
@@ -188,14 +208,14 @@ export function DayCard({
       </div>
 
       {/* Weather */}
-      {weatherSummary || weatherRisk ? (
+      {activeSummary || activeRisk ? (
         <div className="mt-3 flex items-start gap-2 rounded-xl bg-[#f0f7ff] px-3 py-2">
           <CloudSun aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-[#2563eb]" />
           <div className="min-w-0">
-            {weatherSummary ? (
-              <p className="text-xs leading-5 text-[#1e40af]">{weatherSummary}</p>
+            {activeSummary ? (
+              <p className="text-xs leading-5 text-[#1e40af]">{activeSummary}</p>
             ) : null}
-            {weatherRisk ? (
+            {activeRisk ? (
               <div className="mt-1 flex items-center gap-2">
                 <span
                   className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${tone!.badge}`}
@@ -203,9 +223,14 @@ export function DayCard({
                   {tone!.label}
                 </span>
                 <span className="text-[11px] text-[#5b6072]">
-                  {weatherRisk.summary}
+                  {activeRisk.summary}
                 </span>
               </div>
+            ) : null}
+            {activeRisk?.drivingAdvice ? (
+              <p className="mt-0.5 text-[11px] leading-4 text-[#5b6072]">
+                {activeRisk.drivingAdvice}
+              </p>
             ) : null}
           </div>
         </div>
