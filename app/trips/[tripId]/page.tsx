@@ -471,36 +471,30 @@ export default async function TripDetailPage({
     );
 
     // Filter lodging/food/pitfalls to this day.
+    // Priority 1: notes contain D{dayNum} / 第{dayNum}天 marker.
+    // Priority 2: area or name matches one of the day's stop names.
     const stopNames = dayStops.map((s) => s.name);
+    const dayMarker = new RegExp(`D${dayNum}\\b|第${dayNum}天`, "i");
+
+    const matchesDay = (item: { area?: string; name: string; notes?: string }) => {
+      // Check notes for explicit day markers like "D2晚餐" or "D1/D8夜宿".
+      if (item.notes && dayMarker.test(item.notes)) return true;
+      // Fallback: match by area/name against stop names.
+      return stopNames.some(
+        (name) =>
+          samePlacePart(name, item.area) ||
+          samePlacePart(name, item.name) ||
+          (item.notes ? samePlacePart(name, item.notes) : false)
+      );
+    };
+
     const dayLodging = travelPlan
-      ? travelPlan.lodging.filter((item) =>
-          stopNames.some(
-            (name) =>
-              samePlacePart(name, item.area) ||
-              samePlacePart(name, item.name) ||
-              (item.notes && /D\d+|第\d+天|day/i.test(item.notes)
-                ? new RegExp(`D${dayNum}|第${dayNum}天`, "i").test(item.notes)
-                : samePlacePart(name, item.notes))
-          )
-        )
+      ? travelPlan.lodging.filter(matchesDay)
       : [];
-    const dayFood = travelPlan
-      ? travelPlan.food.filter((item) =>
-          stopNames.some(
-            (name) =>
-              samePlacePart(name, item.area) ||
-              samePlacePart(name, item.name) ||
-              (item.notes && /D\d+|第\d+天|day/i.test(item.notes)
-                ? new RegExp(`D${dayNum}|第${dayNum}天`, "i").test(item.notes)
-                : samePlacePart(name, item.notes))
-          )
-        )
-      : [];
+    const dayFood = travelPlan ? travelPlan.food.filter(matchesDay) : [];
     const dayPitfalls = travelPlan
       ? travelPlan.pitfalls.filter((item) =>
-          new RegExp(`D${dayNum}|第${dayNum}天|day\\s*${dayNum}`, "i").test(
-            item.detail + " " + item.title
-          )
+          dayMarker.test(item.detail + " " + item.title)
         )
       : [];
 
