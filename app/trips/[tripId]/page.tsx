@@ -13,7 +13,7 @@ import { GlassCard } from "@/components/glass-card";
 import { BufferList } from "@/components/trips/buffer-list";
 import { MonitoringActions } from "@/components/trips/monitoring-actions";
 import { RouteTimeline } from "@/components/trips/route-timeline";
-import { ItineraryFlow, type ItineraryFlowLeg } from "@/components/trips/itinerary-flow";
+import { DayCard, type DayCardLeg, type DayCardStop } from "@/components/trips/day-card";
 import { TravelPlanCard } from "@/components/trips/travel-plan-card";
 import { TripDeleteButton } from "@/components/trips/trip-delete-button";
 import { TripShareButton } from "@/components/trips/trip-share-button";
@@ -327,23 +327,41 @@ export default async function TripDetailPage({
       targetArriveAt: leg.targetArriveAt ?? undefined,
     };
   });
-  const itineraryLegs: ItineraryFlowLeg[] = trip.legs.map((leg) => {
+  const itineraryLegs: DayCardLeg[] = trip.legs.map((leg) => {
     const candidate =
       leg.selectedCandidate ??
       leg.routeCandidates.find((routeCandidate) => routeCandidate.selected) ??
       leg.routeCandidates[0];
     return {
+      id: leg.id,
       order: leg.order,
-      originName: leg.originName ?? undefined,
-      destinationName: leg.destinationName ?? undefined,
+      originName: leg.originName,
+      originLngLat: leg.originLngLat,
+      destinationName: leg.destinationName,
+      destinationLngLat: leg.destinationLngLat,
       routeMinutes: candidate?.routeMinutes ?? 0,
-      mode: candidate?.mode,
-      bufferMinutes: candidate?.bufferMinutes,
-      totalMinutes: candidate?.totalMinutes,
+      bufferMinutes: candidate?.bufferMinutes ?? 0,
+      mode: candidate?.mode ?? null,
       latestDepartAt: leg.latestDepartAt?.toISOString() ?? null,
       targetArriveAt: leg.targetArriveAt?.toISOString() ?? null,
+      routeTitle: candidate?.title ?? null,
     };
   });
+
+  // Group legs by calendar day in the trip timezone.
+  const dayGroups: { date: string; legs: DayCardLeg[] }[] = [];
+  for (const leg of itineraryLegs) {
+    if (!leg.latestDepartAt) continue;
+    const dayKey = dateKeyInTimeZone(new Date(leg.latestDepartAt), tripTimeZone);
+    if (!dayKey) continue;
+    let group = dayGroups.find((g) => g.date === dayKey);
+    if (!group) {
+      group = { date: dayKey, legs: [] };
+      dayGroups.push(group);
+    }
+    group.legs.push(leg);
+  }
+
   const displayTravelPlan = parsedTravelPlan
     ? alignTravelPlanPitfallsWithSchedule(
         parsedTravelPlan,
@@ -370,6 +388,75 @@ export default async function TripDetailPage({
         displayRouteStops
       )
     : null;
+
+  // Map stops to day groups via the arrival leg's targetArriveAt date.
+  const dayCardsData = dayGroups.map((group, dayIndex) => {
+    const dayStops: DayCardStop[] = [];
+    for (const stop of trip.stops) {
+      const arrivalLeg = itineraryLegs.find(
+        (leg) => leg.destinationName === stop.name
+      );
+      const stopDate = arrivalLeg?.targetArriveAt
+        ? dateKeyInTimeZone(new Date(arrivalLeg.targetArriveAt), tripTimeZone)
+        : null;
+      if (stop.order === 0 && dayIndex === 0) {
+        dayStops.push({
+          id: stop.id,
+          order: stop.order,
+          name: stop.name,
+          kind: stop.kind,
+          address: stop.address,
+          lngLat: stop.lngLat,
+          targetArriveAt: stop.targetArriveAt?.toISOString() ?? null,
+          plannedStayMin: stop.plannedStayMin,
+        });
+      } else if (stopDate === group.date) {
+        dayStops.push({
+          id: stop.id,
+          order: stop.order,
+          name: stop.name,
+          kind: stop.kind,
+          address: stop.address,
+          lngLat: stop.lngLat,
+          targetArriveAt: stop.targetArriveAt?.toISOString() ?? null,
+          plannedStayMin: stop.plannedStayMin,
+        });
+      }
+    }
+    for (const leg of group.legs) {
+      const originStop = trip.stops.find(
+        (s) =>
+          s.name === leg.originName &&
+          !dayStops.some((ds) => ds.name === s.name)
+      );
+      if (originStop) {
+        dayStops.push({
+          id: originStop.id,
+          order: originStop.order,
+          name: originStop.name,
+          kind: originStop.kind,
+          address: originStop.address,
+          lngLat: originStop.lngLat,
+          targetArriveAt: originStop.targetArriveAt?.toISOString() ?? null,
+          plannedStayMin: originStop.plannedStayMin,
+        });
+      }
+    }
+    dayStops.sort((a, b) => a.order - b.order);
+
+    const dayRisk = travelPlan?.weather.routeRisks?.find((risk) =>
+      group.legs.some((leg) => leg.order === risk.legOrder)
+    );
+
+    return {
+      dayNumber: dayIndex + 1,
+      date: group.date,
+      legs: group.legs,
+      stops: dayStops,
+      weatherRisk: dayRisk,
+      weatherSummary: dayIndex === 0 ? travelPlan?.weather.summary : undefined,
+    };
+  });
 
   return (
     <AppShell active="history">
@@ -482,25 +569,32 @@ export default async function TripDetailPage({
           </div>
         </GlassCard>
 
-        <GlassCard className="p-5">
-          <h2 className="text-lg font-bold text-[#191c1e]">
-            {isTravelTrip ? "行程流" : "路线分段"}
-          </h2>
-          <div className="mt-3">
-            {isTravelTrip && travelPlan ? (
-              <ItineraryFlow
-                stops={displayRouteStops}
-                legs={itineraryLegs}
+        {isTravelTrip && travelPlan && dayCardsData.length > 0 ? (
+          <div className="space-y-4">
+            <h2 className="text-lg font-bold text-[#191c1e]">每日行程</h2>
+            {dayCardsData.map((day) => (
+              <DayCard
                 attractions={travelPlan.attractions}
-                routeRisks={travelPlan.weather.routeRisks}
-                forecast={travelPlan.weather.forecast}
+                date={day.date}
+                dayNumber={day.dayNumber}
+                key={day.date}
+                legs={day.legs}
+                stops={day.stops}
                 timezone={tripTimeZone}
+                tripId={trip.id}
+                weatherRisk={day.weatherRisk}
+                weatherSummary={day.weatherSummary}
               />
-            ) : (
-              <RouteTimeline groups={routeGroups} />
-            )}
+            ))}
           </div>
-        </GlassCard>
+        ) : (
+          <GlassCard className="p-5">
+            <h2 className="text-lg font-bold text-[#191c1e]">路线分段</h2>
+            <div className="mt-3">
+              <RouteTimeline groups={routeGroups} />
+            </div>
+          </GlassCard>
+        )}
 
         <GlassCard className="p-5">
           <div className="flex items-center gap-2">
