@@ -88,6 +88,14 @@ function formatRecalculationStatus(status?: string | null) {
   return status ? labels[status] ?? status : "未知";
 }
 
+function samePlacePart(reference: string, candidate?: string | null) {
+  if (!candidate) return false;
+  const ref = reference.toLowerCase().replace(/[\s（）()【】[\]·,，。]/g, "");
+  const cand = candidate.toLowerCase().replace(/[\s（）()【】[\]·,，。]/g, "");
+  if (!ref || !cand) return false;
+  return ref.includes(cand) || cand.includes(ref);
+}
+
 function dateKeyInTimeZone(
   value: Date | null | undefined,
   timeZone: string
@@ -448,13 +456,51 @@ export default async function TripDetailPage({
       group.legs.some((leg) => leg.order === risk.legOrder)
     );
 
+    // Filter lodging/food/pitfalls to this day.
+    const dayNum = dayIndex + 1;
+    const stopNames = dayStops.map((s) => s.name);
+    const dayLodging = travelPlan
+      ? travelPlan.lodging.filter((item) =>
+          stopNames.some(
+            (name) =>
+              samePlacePart(name, item.area) ||
+              samePlacePart(name, item.name) ||
+              (item.notes && /D\d+|第\d+天|day/i.test(item.notes)
+                ? new RegExp(`D${dayNum}|第${dayNum}天`, "i").test(item.notes)
+                : samePlacePart(name, item.notes))
+          )
+        )
+      : [];
+    const dayFood = travelPlan
+      ? travelPlan.food.filter((item) =>
+          stopNames.some(
+            (name) =>
+              samePlacePart(name, item.area) ||
+              samePlacePart(name, item.name) ||
+              (item.notes && /D\d+|第\d+天|day/i.test(item.notes)
+                ? new RegExp(`D${dayNum}|第${dayNum}天`, "i").test(item.notes)
+                : samePlacePart(name, item.notes))
+          )
+        )
+      : [];
+    const dayPitfalls = travelPlan
+      ? travelPlan.pitfalls.filter((item) =>
+          new RegExp(`D${dayNum}|第${dayNum}天|day\\s*${dayNum}`, "i").test(
+            item.detail + " " + item.title
+          )
+        )
+      : [];
+
     return {
-      dayNumber: dayIndex + 1,
+      dayNumber: dayNum,
       date: group.date,
       legs: group.legs,
       stops: dayStops,
       weatherRisk: dayRisk,
       weatherSummary: dayIndex === 0 ? travelPlan?.weather.summary : undefined,
+      lodging: dayLodging,
+      food: dayFood,
+      pitfalls: dayPitfalls,
     };
   });
 
@@ -577,8 +623,11 @@ export default async function TripDetailPage({
                 attractions={travelPlan.attractions}
                 date={day.date}
                 dayNumber={day.dayNumber}
+                food={day.food}
                 key={day.date}
                 legs={day.legs}
+                lodging={day.lodging}
+                pitfalls={day.pitfalls}
                 stops={day.stops}
                 timezone={tripTimeZone}
                 tripId={trip.id}

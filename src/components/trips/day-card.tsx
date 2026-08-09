@@ -4,13 +4,19 @@ import React, { useState } from "react";
 import {
   CarFront,
   CloudSun,
+  Hotel,
   Landmark,
   MapPin,
   RefreshCw,
   Trees,
+  TriangleAlert,
+  Utensils,
 } from "lucide-react";
 import type {
   TravelAttraction,
+  TravelFood,
+  TravelLodging,
+  TravelPitfall,
   TravelWeatherRouteRisk,
 } from "@/lib/trips/travel-plan";
 import { attractionMatchesStop } from "@/lib/trips/travel-plan";
@@ -47,6 +53,9 @@ export type DayCardProps = {
   legs: DayCardLeg[];
   stops: DayCardStop[];
   attractions: TravelAttraction[];
+  lodging: TravelLodging[];
+  food: TravelFood[];
+  pitfalls: TravelPitfall[];
   weatherRisk?: TravelWeatherRouteRisk;
   weatherSummary?: string;
   timezone: string;
@@ -94,12 +103,23 @@ function riskTone(risk: TravelWeatherRouteRisk["risk"]) {
   return { badge: "bg-[#bbf7d0] text-[#166534]", label: "较稳定" };
 }
 
+function placeMatches(reference: string, candidate: string | undefined) {
+  if (!candidate) return false;
+  const ref = reference.toLowerCase().replace(/[\s（）()【】[\]·,，。]/g, "");
+  const cand = candidate.toLowerCase().replace(/[\s（）()【】[\]·,，。]/g, "");
+  if (!ref || !cand) return false;
+  return ref.includes(cand) || cand.includes(ref);
+}
+
 export function DayCard({
   dayNumber,
   date,
   legs,
   stops,
   attractions,
+  lodging,
+  food,
+  pitfalls,
   weatherRisk,
   weatherSummary,
   timezone,
@@ -108,9 +128,7 @@ export function DayCard({
   const [refreshing, setRefreshing] = useState(false);
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
   const [refreshError, setRefreshError] = useState("");
-  const [legOverrides, setLegOverrides] = useState<
-    Record<number, number>
-  >({});
+  const [legOverrides, setLegOverrides] = useState<Record<number, number>>({});
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -208,7 +226,6 @@ export function DayCard({
       <div className="mt-3 grid grid-cols-[28px_minmax(0,1fr)] gap-x-2">
         {stops.map((stop, index) => {
           const isLast = index === stops.length - 1;
-          // Find the leg arriving at this stop and departing from it.
           const arrivalLeg = legs.find(
             (leg) => leg.destinationName === stop.name || leg.order === stop.order
           );
@@ -227,6 +244,20 @@ export function DayCard({
           const isLodging =
             stop.kind === "lodging" ||
             /住宿|酒店|宾馆|民宿|客栈/.test(stop.name);
+
+          // Match lodging and food to this stop by area/name.
+          const stopLodging = lodging.filter(
+            (item) =>
+              placeMatches(stop.name, item.area) ||
+              placeMatches(stop.name, item.name) ||
+              (item.notes && placeMatches(stop.name, item.notes))
+          );
+          const stopFood = food.filter(
+            (item) =>
+              placeMatches(stop.name, item.area) ||
+              placeMatches(stop.name, item.name) ||
+              (item.notes && placeMatches(stop.name, item.notes))
+          );
 
           return (
             <div className="contents" key={`${stop.name}-${index}`}>
@@ -267,37 +298,115 @@ export function DayCard({
                   ) : null}
                 </div>
 
-                {/* Attractions at this stop */}
+                {/* Attractions at this stop — full detail */}
                 {stopAttractions.length > 0 ? (
-                  <div className="mt-1.5 space-y-1.5">
+                  <div className="mt-2 space-y-3">
                     {stopAttractions.map((attraction) => {
                       const isNatural = attraction.category === "natural";
                       const Icon = isNatural ? Trees : Landmark;
                       return (
                         <div
-                          className="flex items-start gap-1.5"
+                          className="rounded-lg bg-[#f8fafc] p-2.5"
                           key={attraction.name}
                         >
-                          <Icon
-                            aria-hidden="true"
-                            className={`mt-0.5 size-3.5 shrink-0 ${
-                              isNatural ? "text-[#0f9f6e]" : "text-[#7c3aed]"
-                            }`}
-                          />
-                          <div className="min-w-0">
-                            <p className="text-xs font-semibold text-[#191c1e]">
-                              {attraction.name}
-                              {attraction.naturalType
-                                ? ` · ${attraction.naturalType}`
-                                : ""}
-                            </p>
-                            <p className="text-[11px] leading-4 text-[#5b6072]">
-                              {attraction.reason.slice(0, 80)}
-                            </p>
+                          <div className="flex items-start gap-1.5">
+                            <Icon
+                              aria-hidden="true"
+                              className={`mt-0.5 size-4 shrink-0 ${
+                                isNatural ? "text-[#0f9f6e]" : "text-[#7c3aed]"
+                              }`}
+                            />
+                            <div className="min-w-0">
+                              <p className="text-xs font-bold text-[#191c1e]">
+                                {attraction.name}
+                                {attraction.naturalType
+                                  ? ` · ${attraction.naturalType}`
+                                  : ""}
+                              </p>
+                            </div>
                           </div>
+                          <p className="mt-1.5 pl-5.5 text-[11px] leading-5 text-[#434655]">
+                            {attraction.reason}
+                          </p>
+                          <div className="mt-1.5 flex flex-wrap gap-1.5 pl-5.5">
+                            {attraction.stayMinutes ? (
+                              <span className="rounded-full bg-[#f2f4f6] px-2 py-0.5 text-[10px] font-semibold text-[#5b6072]">
+                                停留 {formatMinutes(attraction.stayMinutes)}
+                              </span>
+                            ) : null}
+                            {attraction.bestTime ? (
+                              <span className="rounded-full bg-[#f2f4f6] px-2 py-0.5 text-[10px] font-semibold text-[#5b6072]">
+                                {attraction.bestTime}
+                              </span>
+                            ) : null}
+                          </div>
+                          {attraction.weatherNote ? (
+                            <p className="mt-1 pl-5.5 text-[10px] leading-4 text-[#737686]">
+                              🌤 {attraction.weatherNote}
+                            </p>
+                          ) : null}
+                          {attraction.notes ? (
+                            <p className="mt-0.5 pl-5.5 text-[10px] leading-4 text-[#737686]">
+                              {attraction.notes}
+                            </p>
+                          ) : null}
                         </div>
                       );
                     })}
+                  </div>
+                ) : null}
+
+                {/* Lodging at this stop */}
+                {stopLodging.length > 0 ? (
+                  <div className="mt-2 space-y-1.5">
+                    {stopLodging.map((item) => (
+                      <div
+                        className="flex items-start gap-1.5 rounded-lg bg-[#fff7ed]/60 p-2"
+                        key={`lodging-${item.name}`}
+                      >
+                        <Hotel aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-[#ea580c]" />
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-bold text-[#191c1e]">
+                            🏨 {item.name}
+                            {item.budget ? ` · ${item.budget}` : ""}
+                          </p>
+                          <p className="text-[10px] leading-4 text-[#5b6072]">
+                            {item.reason}
+                          </p>
+                          {item.address ? (
+                            <p className="text-[10px] leading-4 text-[#737686]">
+                              {item.address}
+                            </p>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+
+                {/* Food at this stop */}
+                {stopFood.length > 0 ? (
+                  <div className="mt-1.5 space-y-1.5">
+                    {stopFood.map((item) => (
+                      <div
+                        className="flex items-start gap-1.5 rounded-lg bg-[#fef3c7]/40 p-2"
+                        key={`food-${item.name}`}
+                      >
+                        <Utensils aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-[#d97706]" />
+                        <div className="min-w-0">
+                          <p className="text-[11px] font-bold text-[#191c1e]">
+                            🍽 {item.name}
+                            {item.budget ? ` · ${item.budget}` : ""}
+                          </p>
+                          <p className="text-[10px] font-semibold text-[#92400e]">
+                            必尝：{item.mustTry}
+                          </p>
+                          <p className="text-[10px] leading-4 text-[#5b6072]">
+                            {item.reason}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 ) : null}
               </div>
@@ -305,6 +414,45 @@ export function DayCard({
           );
         })}
       </div>
+
+      {/* Pitfalls relevant to this day */}
+      {pitfalls.length > 0 ? (
+        <div className="mt-3 space-y-1.5 border-t border-[#c3c6d7]/30 pt-2.5">
+          {pitfalls.map((pitfall) => (
+            <div
+              className="flex items-start gap-1.5 rounded-lg bg-[#fff4d6]/50 p-2"
+              key={`pitfall-${pitfall.title}`}
+            >
+              <TriangleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-[#b45309]" />
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <p className="text-[11px] font-bold text-[#7a4f00]">
+                    {pitfall.title}
+                  </p>
+                  <span
+                    className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
+                      pitfall.severity === "high"
+                        ? "bg-[#fecaca] text-[#991b1b]"
+                        : pitfall.severity === "low"
+                          ? "bg-[#bbf7d0] text-[#166534]"
+                          : "bg-[#fed7aa] text-[#9a3412]"
+                    }`}
+                  >
+                    {pitfall.severity === "high"
+                      ? "优先确认"
+                      : pitfall.severity === "low"
+                        ? "顺手留意"
+                        : "建议确认"}
+                  </span>
+                </div>
+                <p className="text-[10px] leading-4 text-[#7a4f00]">
+                  {pitfall.detail}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </section>
   );
 }
