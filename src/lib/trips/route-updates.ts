@@ -1,7 +1,11 @@
 import { prisma } from "@/lib/db";
 import { normalizeBufferComponents } from "@/lib/trips/buffers";
 export { cancelTripMonitoring } from "@/lib/trips/monitoring";
-import { buildReminderSchedule } from "@/lib/trips/reminders";
+import {
+  buildReminderSchedule,
+  FIRST_LEG_WEATHER_REFRESH_HOURS,
+  LATER_LEG_WEATHER_REFRESH_HOURS,
+} from "@/lib/trips/reminders";
 import { normalizeRouteTitle } from "@/lib/trips/title";
 import { attachRouteEvidenceToSource } from "@/lib/trips/types";
 import type {
@@ -443,8 +447,8 @@ export async function replaceTripRoute(input: ReplaceTripRouteInput) {
             : undefined,
           weatherRefreshHoursBeforeDeparture: travelPlanForReminders
             ? index === 0
-              ? [72, 24, 1]
-              : [1]
+              ? FIRST_LEG_WEATHER_REFRESH_HOURS
+              : LATER_LEG_WEATHER_REFRESH_HOURS
             : undefined,
         }),
       });
@@ -602,8 +606,8 @@ export async function replaceReminderSchedule(input: ReplaceReminderScheduleInpu
           travelWeatherRefreshAt: travelPlan ? leg.latestDepartAt : undefined,
           weatherRefreshHoursBeforeDeparture: travelPlan
             ? leg.order === firstTripLeg?.order
-              ? [72, 24, 1]
-              : [1]
+              ? FIRST_LEG_WEATHER_REFRESH_HOURS
+              : LATER_LEG_WEATHER_REFRESH_HOURS
             : undefined,
         }),
       });

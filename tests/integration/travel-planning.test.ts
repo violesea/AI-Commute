@@ -851,10 +851,10 @@ describe("travel planning integration", () => {
     const weatherJobs = persisted.reminderJobs.filter(
       (job) => job.kind === "weather_refresh"
     );
-    expect(weatherJobs).toHaveLength(6);
+    expect(weatherJobs).toHaveLength(5);
     expect(
       weatherJobs.filter((job) => job.legId === persisted.legs[0]?.id)
-    ).toHaveLength(3);
+    ).toHaveLength(2);
     for (const leg of persisted.legs.slice(1)) {
       expect(weatherJobs.filter((job) => job.legId === leg.id)).toHaveLength(1);
     }
@@ -863,7 +863,7 @@ describe("travel planning integration", () => {
         .filter((job) => job.legId === persisted.legs[0]?.id)
         .map((job) => JSON.parse(job.payloadJson).hoursBeforeDeparture)
         .sort((left, right) => left - right)
-    ).toEqual([1, 24, 72]);
+    ).toEqual([1, 48]);
     expect(JSON.parse(persisted.travelPlanJson ?? "{}")).toMatchObject({
       budget: { total: "¥3,000-4,500/车" },
       routeEvidence: {

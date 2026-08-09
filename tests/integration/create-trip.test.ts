@@ -142,14 +142,11 @@ describe("createPlannedTrip", () => {
       expect(leg.reminderJobs.map((job) => job.kind)).toEqual([
         "recheck",
         "recheck",
-        "recheck",
-        "recheck",
-        "recheck",
         "depart_now",
       ]);
     }
 
-    expect(persisted.reminderJobs).toHaveLength(12);
+    expect(persisted.reminderJobs).toHaveLength(6);
   });
 
   it("accepts destination stops with explicit leg endpoints", async () => {
@@ -224,7 +221,7 @@ describe("createPlannedTrip", () => {
         (component) => component.category === "weather_context"
       )?.minutes
     ).toBe(0);
-    expect(persisted.legs[0].reminderJobs).toHaveLength(6);
+    expect(persisted.legs[0].reminderJobs).toHaveLength(3);
   });
 
   it("persists the structured travel plan alongside the itinerary graph", async () => {

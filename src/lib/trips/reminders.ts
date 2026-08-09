@@ -1,6 +1,24 @@
 import type { ReminderJobData, ReminderKind } from "@/lib/trips/types";
 
-export const DEFAULT_REMINDER_CADENCE_MINUTES = [30, 20, 15, 10, 5, 0] as const;
+/**
+ * Recheck cadence: minutes before latest departure that the scheduler re-runs
+ * the agent to detect route-time changes above the user's threshold.
+ *
+ * Each recheck fires a full agent continuation session, so these are expensive.
+ * 30/20/10-minute triple-rechecks almost always stay under threshold and only
+ * burn tokens; 60 min is the earliest window where route minutes can shift
+ * meaningfully and the user can still adjust, 15 min is the last useful
+ * correction point.
+ */
+export const DEFAULT_REMINDER_CADENCE_MINUTES = [60, 15, 0] as const;
+
+/**
+ * Weather refresh windows (hours before departure) for travel plans.
+ * 72h forecasts are too noisy to justify an agent session; 48h is the
+ * reliability/lead-time balance, and 1h is the near-departure finalization.
+ */
+export const FIRST_LEG_WEATHER_REFRESH_HOURS = [48, 1] as const;
+export const LATER_LEG_WEATHER_REFRESH_HOURS = [1] as const;
 
 export type BuildReminderScheduleInput = {
   tripId: string;
@@ -19,7 +37,7 @@ export function buildReminderSchedule({
   cadenceMinutes = DEFAULT_REMINDER_CADENCE_MINUTES,
   now,
   travelWeatherRefreshAt,
-  weatherRefreshHoursBeforeDeparture = [72, 24],
+  weatherRefreshHoursBeforeDeparture = FIRST_LEG_WEATHER_REFRESH_HOURS,
 }: BuildReminderScheduleInput): ReminderJobData[] {
   const routeReminders = cadenceMinutes
     .map((minutesBeforeDeparture) => {

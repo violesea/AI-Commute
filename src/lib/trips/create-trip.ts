@@ -1,6 +1,10 @@
 import { prisma } from "@/lib/db";
 import { normalizeBufferComponents } from "@/lib/trips/buffers";
-import { buildReminderSchedule } from "@/lib/trips/reminders";
+import {
+  buildReminderSchedule,
+  FIRST_LEG_WEATHER_REFRESH_HOURS,
+  LATER_LEG_WEATHER_REFRESH_HOURS,
+} from "@/lib/trips/reminders";
 import { normalizeRouteTitle } from "@/lib/trips/title";
 import { attachRouteEvidenceToSource } from "@/lib/trips/types";
 import type {
@@ -283,8 +287,8 @@ export async function createPlannedTrip(input: CreatePlannedTripInput) {
           travelWeatherRefreshAt: input.travelPlan ? latestDepartAt : undefined,
           weatherRefreshHoursBeforeDeparture: input.travelPlan
             ? index === 0
-              ? [72, 24, 1]
-              : [1]
+              ? FIRST_LEG_WEATHER_REFRESH_HOURS
+              : LATER_LEG_WEATHER_REFRESH_HOURS
             : undefined,
         }),
       });

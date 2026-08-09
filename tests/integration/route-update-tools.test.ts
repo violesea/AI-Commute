@@ -234,12 +234,12 @@ describe("route update helpers", () => {
     for (const leg of updated.legs) {
       expect(leg.routeCandidates).toHaveLength(1);
       expect(leg.routeSegments).toHaveLength(1);
-      expect(leg.reminderJobs).toHaveLength(6);
+      expect(leg.reminderJobs).toHaveLength(3);
       expect(leg.reminderJobs.every((job) => job.status === "scheduled")).toBe(
         true
       );
     }
-    expect(updated.reminderJobs).toHaveLength(12);
+    expect(updated.reminderJobs).toHaveLength(6);
     expect(
       updated.reminderJobs.some((job) =>
         original.reminderJobs.some((oldJob) => oldJob.id === job.id)

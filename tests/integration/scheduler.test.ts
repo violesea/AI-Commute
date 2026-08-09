@@ -95,7 +95,10 @@ describe("scheduler reminder processing", () => {
     const trip = await createSchedulerTrip({
       userId: user.id,
       now,
-      latestDepartOffsetMinutes: 60,
+      // Depart far enough ahead that the default [60,15,0] cadence does not
+      // schedule any recheck inside the 90s due window, so the only due job is
+      // the manually inserted stale one below.
+      latestDepartOffsetMinutes: 90,
     });
     const leg = await prisma.tripLeg.findFirstOrThrow({
       where: { tripId: trip.id },
@@ -477,7 +480,12 @@ describe("scheduler reminder processing", () => {
       data: { tripId: trip.id },
     });
     const recheckJob = await prisma.reminderJob.findFirstOrThrow({
-      where: { tripId: trip.id, kind: "recheck", scheduledFor: now },
+      where: { tripId: trip.id, kind: "recheck" },
+      orderBy: { scheduledFor: "asc" },
+    });
+    await prisma.reminderJob.update({
+      where: { id: recheckJob.id },
+      data: { scheduledFor: now },
     });
     let seenMessages = "";
     const chatClient: AgentChatClient = {
@@ -594,7 +602,12 @@ describe("scheduler reminder processing", () => {
       data: { tripId: trip.id },
     });
     const recheckJob = await prisma.reminderJob.findFirstOrThrow({
-      where: { tripId: trip.id, kind: "recheck", scheduledFor: now },
+      where: { tripId: trip.id, kind: "recheck" },
+      orderBy: { scheduledFor: "asc" },
+    });
+    await prisma.reminderJob.update({
+      where: { id: recheckJob.id },
+      data: { scheduledFor: now },
     });
     const changedLatestDepartAt = new Date(now.getTime() + 40 * 60_000);
     let calls = 0;
@@ -836,7 +849,12 @@ describe("scheduler reminder processing", () => {
       data: { status: "completed", tripId: trip.id },
     });
     const weatherJob = await prisma.reminderJob.findFirstOrThrow({
-      where: { tripId: trip.id, kind: "weather_refresh", scheduledFor: now },
+      where: { tripId: trip.id, kind: "weather_refresh" },
+      orderBy: { scheduledFor: "asc" },
+    });
+    await prisma.reminderJob.update({
+      where: { id: weatherJob.id },
+      data: { scheduledFor: now },
     });
     let calls = 0;
     const chatClient: AgentChatClient = {

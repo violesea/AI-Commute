@@ -74,7 +74,7 @@ describe("telegram state service", () => {
     ]);
     expect(trips[0]).toMatchObject({
       title: "home-monitoring",
-      scheduledReminderCount: 4,
+      scheduledReminderCount: 1,
     });
   });
 
