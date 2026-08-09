@@ -381,10 +381,29 @@ describe("trip share views", () => {
       canShare: canShareMock,
       share: shareMock,
     });
+    // jsdom 29 ships a Blob without stream(), but the share path serializes
+    // the File built from this blob via blob.stream(). Patch the mock blob so
+    // the File is share-shaped and the code reaches navigator.share before the
+    // injected share rejection falls through to the download branch.
+    const makeShareableBlob = () => {
+      const blob = new Blob(["png"], { type: "image/png" });
+      if (typeof blob.stream !== "function") {
+        Object.assign(blob, {
+          stream: () =>
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new Uint8Array([0x70, 0x6e, 0x67]));
+                controller.close();
+              },
+            }),
+        });
+      }
+      return blob;
+    };
     const fetchMock = vi.fn(
       async (url: RequestInfo | URL, init?: RequestInit) => {
         if (String(url).startsWith("data:image/png")) {
-          return new Response(new Blob(["png"], { type: "image/png" }));
+          return new Response(makeShareableBlob());
         }
         if (init?.method === "POST") {
           return Response.json({
