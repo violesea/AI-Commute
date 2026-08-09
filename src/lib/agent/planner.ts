@@ -139,6 +139,7 @@ export type ToolExecutionContext = {
   signal?: AbortSignal;
   toolResultCache: Map<string, unknown>;
   travelEvidenceBudget?: TravelEvidenceBudget;
+  maxConversationRounds?: number;
 };
 
 const fallbackSettings = (): PlanningSettings => {
@@ -1256,7 +1257,9 @@ async function runConversationAttempt(input: {
   while (true) {
     assertAgentRunActive(input.signal);
     conversationRounds += 1;
-    const maxRounds = MAX_CONVERSATION_ROUNDS[input.context.purpose];
+    const maxRounds =
+      input.context.maxConversationRounds ??
+      MAX_CONVERSATION_ROUNDS[input.context.purpose];
     if (conversationRounds > maxRounds) {
       throw new AgentConversationLimitError(
         `${input.context.purpose === "travel" ? "旅行" : "通勤"}规划超过 ${maxRounds} 轮对话仍未完成，已停止重复调用工具；请缩短需求或稍后重试。`
@@ -1848,6 +1851,9 @@ export async function runPlanningAttempt(
       session.purpose === "travel" ? "travel" : "planning",
       session.prompt
     ),
+    // Multi-route themed attempts need more rounds: the model must re-gather
+    // theme-specific evidence and recover from more validation rejections.
+    maxConversationRounds: variantOptions?.theme ? 20 : undefined,
   };
   const messages = await createInitialMessages(
     session,
