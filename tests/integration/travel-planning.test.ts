@@ -853,22 +853,15 @@ describe("travel planning integration", () => {
       ["2026-08-09 08:00", "2026-08-09 11:03"],
       ["2026-08-11 06:30", "2026-08-11 17:30"],
     ]);
+    // Background recheck/weather_refresh disabled — only depart_now per leg.
     const weatherJobs = persisted.reminderJobs.filter(
       (job) => job.kind === "weather_refresh"
     );
-    expect(weatherJobs).toHaveLength(5);
-    expect(
-      weatherJobs.filter((job) => job.legId === persisted.legs[0]?.id)
-    ).toHaveLength(2);
-    for (const leg of persisted.legs.slice(1)) {
-      expect(weatherJobs.filter((job) => job.legId === leg.id)).toHaveLength(1);
-    }
-    expect(
-      weatherJobs
-        .filter((job) => job.legId === persisted.legs[0]?.id)
-        .map((job) => JSON.parse(job.payloadJson).hoursBeforeDeparture)
-        .sort((left, right) => left - right)
-    ).toEqual([1, 48]);
+    expect(weatherJobs).toHaveLength(0);
+    const departJobs = persisted.reminderJobs.filter(
+      (job) => job.kind === "depart_now"
+    );
+    expect(departJobs.length).toBe(persisted.legs.length);
     expect(JSON.parse(persisted.travelPlanJson ?? "{}")).toMatchObject({
       budget: { total: "¥3,000-4,500/车" },
       routeEvidence: {

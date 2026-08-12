@@ -39,64 +39,26 @@ export function buildReminderSchedule({
   travelWeatherRefreshAt,
   weatherRefreshHoursBeforeDeparture = FIRST_LEG_WEATHER_REFRESH_HOURS,
 }: BuildReminderScheduleInput): ReminderJobData[] {
-  const routeReminders = cadenceMinutes
-    .map((minutesBeforeDeparture) => {
-      const kind: ReminderKind =
-        minutesBeforeDeparture === 0 ? "depart_now" : "recheck";
-      const scheduledFor = new Date(
-        latestDepartAt.getTime() - minutesBeforeDeparture * 60_000
-      );
+  // Background recheck/weather_refresh jobs have been disabled — users refresh
+  // each day manually via the DayCard refresh button. Only keep the depart_now
+  // reminder (the "time to leave" notification at latestDepartAt).
+  const departNowReminder: ReminderJobData = {
+    tripId,
+    legId,
+    kind: "depart_now",
+    scheduledFor: latestDepartAt,
+    dedupeKey: `${tripId}:${legId}:depart_now:0`,
+    payloadJson: JSON.stringify({
+      tripId,
+      legId,
+      kind: "depart_now",
+      minutesBeforeDeparture: 0,
+    }),
+  };
 
-      return {
-        tripId,
-        legId,
-        kind,
-        scheduledFor,
-        dedupeKey: `${tripId}:${legId}:${kind}:${minutesBeforeDeparture}`,
-        payloadJson: JSON.stringify({
-          tripId,
-          legId,
-          kind,
-          minutesBeforeDeparture,
-        }),
-      };
-    })
-    .filter((reminder) => !now || reminder.scheduledFor >= now);
+  if (now && departNowReminder.scheduledFor < now) {
+    return [];
+  }
 
-  const weatherRefreshReminders = travelWeatherRefreshAt
-    ? weatherRefreshHoursBeforeDeparture
-        .map((hoursBeforeDeparture): ReminderJobData => {
-          if (
-            !Number.isFinite(hoursBeforeDeparture) ||
-            hoursBeforeDeparture < 0
-          ) {
-            throw new Error(
-              "Weather refresh hours must be non-negative numbers."
-            );
-          }
-
-          const scheduledFor = new Date(
-            travelWeatherRefreshAt.getTime() - hoursBeforeDeparture * 60 * 60_000
-          );
-
-          return {
-            tripId,
-            legId,
-            kind: "weather_refresh",
-            scheduledFor,
-            dedupeKey: `${tripId}:${legId}:weather_refresh:${hoursBeforeDeparture}`,
-            payloadJson: JSON.stringify({
-              tripId,
-              legId,
-              kind: "weather_refresh",
-              hoursBeforeDeparture,
-            }),
-          };
-        })
-        .filter((reminder) => !now || reminder.scheduledFor >= now)
-    : [];
-
-  return [...weatherRefreshReminders, ...routeReminders].sort(
-    (left, right) => left.scheduledFor.getTime() - right.scheduledFor.getTime()
-  );
+  return [departNowReminder];
 }

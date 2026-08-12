@@ -234,12 +234,12 @@ describe("route update helpers", () => {
     for (const leg of updated.legs) {
       expect(leg.routeCandidates).toHaveLength(1);
       expect(leg.routeSegments).toHaveLength(1);
-      expect(leg.reminderJobs).toHaveLength(3);
+      expect(leg.reminderJobs).toHaveLength(1);
       expect(leg.reminderJobs.every((job) => job.status === "scheduled")).toBe(
         true
       );
     }
-    expect(updated.reminderJobs).toHaveLength(6);
+    expect(updated.reminderJobs).toHaveLength(2);
     expect(
       updated.reminderJobs.some((job) =>
         original.reminderJobs.some((oldJob) => oldJob.id === job.id)
@@ -355,14 +355,12 @@ describe("route update helpers", () => {
     });
 
     expect(currentLeg.id).not.toBe(originalLeg.id);
-    expect(reminders).toHaveLength(2);
+    // Background recheck disabled — only depart_now reminder per leg.
+    expect(reminders).toHaveLength(1);
     expect(new Set(reminders.map((job) => job.legId))).toEqual(
       new Set([currentLeg.id])
     );
-    expect(reminders.map((job) => job.scheduledFor)).toEqual([
-      new Date("2026-07-04T08:20:00.000Z"),
-      new Date("2026-07-04T08:30:00.000Z"),
-    ]);
+    expect(reminders.map((job) => job.kind)).toEqual(["depart_now"]);
   });
 
   it("selects a replacement route candidate by key when an agent sends stale leg and candidate ids", async () => {
@@ -528,13 +526,12 @@ describe("route update helpers", () => {
       cadenceMinutes: [10, 10, 0, 5.7],
     });
 
-    expect(reminders).toHaveLength(3);
-    expect(reminders.map((job) => JSON.parse(job.payloadJson))).toEqual([
-      expect.objectContaining({ minutesBeforeDeparture: 10 }),
-      expect.objectContaining({ minutesBeforeDeparture: 6 }),
-      expect.objectContaining({ minutesBeforeDeparture: 0 }),
-    ]);
-    expect(new Set(reminders.map((job) => job.dedupeKey)).size).toBe(3);
+    // Background recheck disabled — cadenceMinutes ignored, only depart_now.
+    const allLegs = await prisma.tripLeg.findMany({
+      where: { tripId: trip.id },
+    });
+    expect(reminders).toHaveLength(allLegs.length);
+    expect(reminders.every((job) => job.kind === "depart_now")).toBe(true);
   });
 
   it("rejects invalid reminder cadence and undefined memory candidate values clearly", async () => {
