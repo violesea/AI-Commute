@@ -1,13 +1,20 @@
 import { prisma } from "@/lib/db";
 import { normalizeBufferComponents } from "@/lib/trips/buffers";
 export { cancelTripMonitoring } from "@/lib/trips/monitoring";
-import { buildReminderSchedule } from "@/lib/trips/reminders";
+import {
+  buildReminderSchedule,
+  FIRST_LEG_WEATHER_REFRESH_HOURS,
+  LATER_LEG_WEATHER_REFRESH_HOURS,
+} from "@/lib/trips/reminders";
 import { normalizeRouteTitle } from "@/lib/trips/title";
+import { attachRouteEvidenceToSource } from "@/lib/trips/types";
 import type {
   BufferComponentInput,
   PlannedTripLegInput,
   PlannedTripStopInput,
 } from "@/lib/trips/types";
+import { parseTravelPlanJson, type TravelPlan } from "@/lib/trips/travel-plan";
+import { assertTravelItinerarySchedule } from "@/lib/trips/travel-schedule";
 
 const DEFAULT_ROUTE_MINUTES = 30;
 const DEFAULT_BUFFER_COMPONENTS: BufferComponentInput[] = [
@@ -41,6 +48,7 @@ type TripRouteUpdateInput = {
   finalStopName?: string;
   targetArriveAt?: Date;
   status?: string;
+  travelPlan?: TravelPlan;
 };
 
 export type ReplaceTripRouteInput = TripRouteUpdateInput & {
@@ -148,11 +156,12 @@ function resolveLegStops(input: {
   legInput: PlannedTripLegInput;
   index: number;
   explicitLegEndpoints: boolean;
+  structuredTravelRoute: boolean;
 }) {
   const sequentialFrom = input.stops[input.index];
   const sequentialTo = input.stops[input.index + 1] ?? input.stops.at(-1);
 
-  if (!input.explicitLegEndpoints) {
+  if (input.structuredTravelRoute || !input.explicitLegEndpoints) {
     return {
       fromStop: sequentialFrom,
       toStop: sequentialTo,
@@ -226,6 +235,9 @@ export async function updateTripSummary(input: TripRouteUpdateInput) {
       finalStopName,
       targetArriveAt: input.targetArriveAt ?? trip.targetArriveAt,
       status: input.status ?? trip.status,
+      travelPlanJson: input.travelPlan
+        ? serialize(input.travelPlan)
+        : undefined,
     },
   });
 }
@@ -254,6 +266,17 @@ export async function replaceTripRoute(input: ReplaceTripRouteInput) {
     const lastStop = orderedStops[orderedStops.length - 1];
     const firstLeg = orderedLegs[0];
     const lastLeg = orderedLegs[orderedLegs.length - 1];
+    const travelPlanForValidation =
+      input.travelPlan ?? parseTravelPlanJson(trip.travelPlanJson);
+    if (travelPlanForValidation) {
+      assertTravelItinerarySchedule({
+        prompt: trip.rawPrompt,
+        timezone: trip.timezone,
+        stops: orderedStops,
+        legs: orderedLegs,
+        lodging: travelPlanForValidation.lodging,
+      });
+    }
     const finalStopName =
       input.finalStopName ?? lastLeg?.destinationName ?? lastStop.name;
     const title = normalizeRouteTitle({
@@ -292,6 +315,9 @@ export async function replaceTripRoute(input: ReplaceTripRouteInput) {
     }
 
     const explicitLegEndpoints = hasExplicitLegEndpoints(orderedLegs);
+    const structuredTravelRoute = Boolean(travelPlanForValidation);
+    const travelPlanForReminders =
+      input.travelPlan ?? parseTravelPlanJson(trip.travelPlanJson);
     for (const [index, legInput] of orderedLegs.entries()) {
       const order = legInput.order ?? index;
       const { fromStop, toStop } = resolveLegStops({
@@ -299,6 +325,7 @@ export async function replaceTripRoute(input: ReplaceTripRouteInput) {
         legInput,
         index,
         explicitLegEndpoints,
+        structuredTravelRoute,
       });
       if (!toStop) {
         throw new Error(`Route leg ${order} is missing a destination stop.`);
@@ -323,10 +350,18 @@ export async function replaceTripRoute(input: ReplaceTripRouteInput) {
         routeMinutes + bufferMinutes,
         Math.round(legInput.totalMinutes ?? routeMinutes + bufferMinutes)
       );
-      const originName = legInput.originName ?? fromStop?.name ?? "";
-      const originLngLat = legInput.originLngLat ?? fromStop?.lngLat ?? "";
-      const destinationName = legInput.destinationName ?? toStop.name;
-      const destinationLngLat = legInput.destinationLngLat ?? toStop.lngLat;
+      const originName = structuredTravelRoute
+        ? fromStop?.name ?? legInput.originName ?? ""
+        : legInput.originName ?? fromStop?.name ?? "";
+      const originLngLat = structuredTravelRoute
+        ? fromStop?.lngLat ?? legInput.originLngLat ?? ""
+        : legInput.originLngLat ?? fromStop?.lngLat ?? "";
+      const destinationName = structuredTravelRoute
+        ? toStop.name
+        : legInput.destinationName ?? toStop.name;
+      const destinationLngLat = structuredTravelRoute
+        ? toStop.lngLat
+        : legInput.destinationLngLat ?? toStop.lngLat;
       const latestDepartAt = defaultLatestDepartAt(
         input.targetArriveAt ?? trip.targetArriveAt,
         legInput,
@@ -363,7 +398,9 @@ export async function replaceTripRoute(input: ReplaceTripRouteInput) {
           rationale:
             legInput.routeRationale ??
             "已选为该路段的更新后监控路线。",
-          sourceJson: serialize(legInput.source),
+          sourceJson: serialize(
+            attachRouteEvidenceToSource(legInput.source, legInput.routeEvidence)
+          ),
         },
       });
 
@@ -382,7 +419,9 @@ export async function replaceTripRoute(input: ReplaceTripRouteInput) {
           detail: legInput.segmentDetail,
           minutes: routeMinutes,
           source: legInput.segmentSource ?? "agent",
-          rawJson: serialize(legInput.source),
+          rawJson: serialize(
+            attachRouteEvidenceToSource(legInput.source, legInput.routeEvidence)
+          ),
         },
       });
 
@@ -403,6 +442,14 @@ export async function replaceTripRoute(input: ReplaceTripRouteInput) {
           tripId: trip.id,
           legId: leg.id,
           latestDepartAt,
+          travelWeatherRefreshAt: travelPlanForReminders
+            ? latestDepartAt
+            : undefined,
+          weatherRefreshHoursBeforeDeparture: travelPlanForReminders
+            ? index === 0
+              ? FIRST_LEG_WEATHER_REFRESH_HOURS
+              : LATER_LEG_WEATHER_REFRESH_HOURS
+            : undefined,
         }),
       });
     }
@@ -414,6 +461,9 @@ export async function replaceTripRoute(input: ReplaceTripRouteInput) {
         finalStopName,
         targetArriveAt: input.targetArriveAt ?? trip.targetArriveAt,
         status: input.status ?? "monitoring",
+        travelPlanJson: input.travelPlan
+          ? serialize(input.travelPlan)
+          : undefined,
       },
     });
   });
@@ -518,7 +568,13 @@ export async function selectRouteCandidate(input: SelectRouteCandidateInput) {
 }
 
 export async function replaceReminderSchedule(input: ReplaceReminderScheduleInput) {
-  await findOwnedTrip(input.tripId, input.userId);
+  const trip = await findOwnedTrip(input.tripId, input.userId);
+  const travelPlan = parseTravelPlanJson(trip.travelPlanJson);
+  const firstTripLeg = await prisma.tripLeg.findFirst({
+    where: { tripId: input.tripId },
+    orderBy: { order: "asc" },
+    select: { order: true },
+  });
   const cadenceMinutes = normalizeCadenceMinutes(input.cadenceMinutes);
   const legs = input.legId || input.legOrder !== undefined
     ? [await findOwnedLeg(input)]
@@ -547,6 +603,12 @@ export async function replaceReminderSchedule(input: ReplaceReminderScheduleInpu
           latestDepartAt: leg.latestDepartAt,
           cadenceMinutes,
           now: input.now,
+          travelWeatherRefreshAt: travelPlan ? leg.latestDepartAt : undefined,
+          weatherRefreshHoursBeforeDeparture: travelPlan
+            ? leg.order === firstTripLeg?.order
+              ? FIRST_LEG_WEATHER_REFRESH_HOURS
+              : LATER_LEG_WEATHER_REFRESH_HOURS
+            : undefined,
         }),
       });
     }

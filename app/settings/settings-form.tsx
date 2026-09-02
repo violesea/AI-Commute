@@ -1,11 +1,18 @@
 "use client";
 
 import React, { FormEvent, KeyboardEvent, useState } from "react";
-import { ChevronDown, Loader2, Mail, Send } from "lucide-react";
+import { CheckCircle2, ChevronDown, Loader2, Mail, PlugZap, Send } from "lucide-react";
+import {
+  DEFAULT_PLANNING_MODEL,
+  PLANNING_MODEL_OPTIONS,
+  TRAVEL_PLANNING_MODEL,
+} from "@/lib/agent/model-config";
 
 type SettingsValues = {
   defaultCity: string;
   timezone: string;
+  model?: string;
+  modelConfigured?: boolean;
   originName: string;
   originLngLat: string;
   routePreference: string;
@@ -13,6 +20,8 @@ type SettingsValues = {
   emailRecipient: string;
   routeChangeThresholdMinutes?: number;
 };
+
+type ModelOption = readonly [string, string];
 
 const routePreferenceOptions = [
   ["balanced", "均衡"],
@@ -29,15 +38,17 @@ type SelectFieldProps = {
   name: string;
   options: readonly (readonly [string, string])[];
   defaultValue: string;
+  onChange?: (value: string) => void;
 };
 
-function SelectField({ defaultValue, id, name, options }: SelectFieldProps) {
+function SelectField({ defaultValue, id, name, onChange, options }: SelectFieldProps) {
   const initialOption = options.find(([value]) => value === defaultValue) ?? options[0];
   const [selected, setSelected] = useState(initialOption);
   const [open, setOpen] = useState(false);
 
   function selectOption(option: readonly [string, string]) {
     setSelected(option);
+    onChange?.(option[0]);
     setOpen(false);
   }
 
@@ -147,9 +158,25 @@ function formatTestNotificationMessage(
   return detail ? `${failurePrefix}：${detail}` : failurePrefix;
 }
 
-export function SettingsForm({ values }: { values: SettingsValues }) {
+export function SettingsForm({
+  modelOptions = PLANNING_MODEL_OPTIONS,
+  values,
+}: {
+  modelOptions?: readonly ModelOption[];
+  values: SettingsValues;
+}) {
   const [status, setStatus] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const initialModel =
+    modelOptions.find(([value]) => value === values.model)?.[0] ??
+    modelOptions[0]?.[0] ??
+    DEFAULT_PLANNING_MODEL;
+  const [model, setModel] = useState<string>(initialModel);
+  const [modelTestStatus, setModelTestStatus] = useState("");
+  const [travelModelTestStatus, setTravelModelTestStatus] = useState("");
+  const [testingModel, setTestingModel] = useState<"commute" | "travel" | null>(
+    null
+  );
   const [telegramChatId, setTelegramChatId] = useState(values.telegramChatId);
   const [emailRecipient, setEmailRecipient] = useState(values.emailRecipient);
   const [telegramTestStatus, setTelegramTestStatus] = useState("");
@@ -164,6 +191,52 @@ export function SettingsForm({ values }: { values: SettingsValues }) {
   const [places, setPlaces] = useState<PlaceCandidate[]>([]);
   const [placeStatus, setPlaceStatus] = useState("");
   const routeChangeThresholdMinutes = values.routeChangeThresholdMinutes ?? 3;
+  const selectedModelLabel =
+    modelOptions.find(([value]) => value === model)?.[1] ?? model;
+
+  async function testModelConnection(target: "commute" | "travel") {
+    if (testingModel) {
+      return;
+    }
+
+    const targetModel = target === "travel" ? TRAVEL_PLANNING_MODEL : model;
+    const targetLabel =
+      target === "travel"
+        ? modelOptions.find(([value]) => value === TRAVEL_PLANNING_MODEL)?.[1] ??
+          TRAVEL_PLANNING_MODEL
+        : selectedModelLabel;
+    const setTargetStatus =
+      target === "travel" ? setTravelModelTestStatus : setModelTestStatus;
+
+    setTargetStatus("");
+    setTestingModel(target);
+
+    try {
+      const response = await fetch("/api/settings/test-model", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: targetModel }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      const result = payload.result as
+        | { status?: string; model?: string; latencyMs?: number; error?: string }
+        | undefined;
+
+      if (response.ok && result?.status === "connected") {
+        const latency =
+          typeof result.latencyMs === "number" ? `，耗时 ${result.latencyMs}ms` : "";
+        setTargetStatus(`接入成功：${targetLabel}${latency}`);
+      } else {
+        setTargetStatus(
+          result?.error ?? payload.error ?? "模型接入失败，请检查服务器配置。"
+        );
+      }
+    } catch {
+      setTargetStatus("模型接入失败，请检查服务器配置或网络。");
+    } finally {
+      setTestingModel(null);
+    }
+  }
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -284,6 +357,87 @@ export function SettingsForm({ values }: { values: SettingsValues }) {
             name="timezone"
             options={timezoneOptions}
           />
+        </section>
+
+        <section className="grid gap-2 py-4 md:grid-cols-[160px_1fr] md:items-start">
+          <label
+            className="text-sm font-medium text-on-surface-variant"
+            htmlFor="model"
+          >
+            通勤规划模型
+          </label>
+          <div className="space-y-2">
+            <SelectField
+              defaultValue={values.model ?? DEFAULT_PLANNING_MODEL}
+              id="model"
+              name="model"
+              onChange={setModel}
+              options={modelOptions}
+            />
+            <div className="rounded-2xl bg-[#f2f4f6] p-4 text-sm text-on-surface-variant">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-semibold text-on-surface">模型接入</span>
+                <span className="inline-flex items-center gap-1.5 font-semibold">
+                  {values.modelConfigured ? (
+                    <CheckCircle2 aria-hidden="true" className="size-4 text-emerald-600" />
+                  ) : null}
+                  {values.modelConfigured ? "服务器 API 已配置" : "未配置 API Key"}
+                </span>
+              </div>
+              <p className="mt-2 leading-5">
+                API Key 和 Base URL 保存在服务器环境变量中，不在浏览器显示。点击测试会用当前选择的模型发送一次最小请求。
+              </p>
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+                <button
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#dae2fd] px-4 py-2.5 text-sm font-semibold text-[#1d3d7c] transition hover:bg-[#bec6e0] disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={testingModel !== null}
+                  onClick={() => void testModelConnection("commute")}
+                  type="button"
+                >
+                  {testingModel === "commute" ? (
+                    <Loader2 aria-hidden="true" className="size-4 animate-spin" />
+                  ) : (
+                    <PlugZap aria-hidden="true" className="size-4" />
+                  )}
+                  测试当前模型接入
+                </button>
+                {modelTestStatus ? (
+                  <p className="text-sm font-medium text-on-surface-variant" role="status">
+                    {modelTestStatus}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+            <div className="mt-3 rounded-2xl border border-[#c6d5ff] bg-[#eef3ff] p-4 text-sm text-[#1d3d7c]">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-semibold">旅行规划模型：DeepSeek V4 Flash</p>
+                <span className="font-semibold">固定模型</span>
+              </div>
+              <p className="mt-1 leading-5">
+                旅行请求固定接入 {TRAVEL_PLANNING_MODEL}，不受上面的通勤模型选择影响。
+              </p>
+              <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+                <button
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-white px-4 py-2.5 text-sm font-semibold text-[#1d3d7c] ring-1 ring-inset ring-[#c6d5ff] transition hover:bg-[#f7f9ff] disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={testingModel !== null}
+                  onClick={() => void testModelConnection("travel")}
+                  type="button"
+                >
+                  {testingModel === "travel" ? (
+                    <Loader2 aria-hidden="true" className="size-4 animate-spin" />
+                  ) : (
+                    <PlugZap aria-hidden="true" className="size-4" />
+                  )}
+                  测试旅行模型接入
+                </button>
+                {travelModelTestStatus ? (
+                  <p className="text-sm font-medium text-[#1d3d7c]" role="status">
+                    {travelModelTestStatus}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          </div>
         </section>
 
         <section className="grid gap-3 py-4 md:grid-cols-[160px_1fr] md:items-start">

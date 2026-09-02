@@ -13,6 +13,8 @@ import { GlassCard } from "@/components/glass-card";
 import { BufferList } from "@/components/trips/buffer-list";
 import { MonitoringActions } from "@/components/trips/monitoring-actions";
 import { RouteTimeline } from "@/components/trips/route-timeline";
+import { DayCard, type DayCardLeg, type DayCardStop } from "@/components/trips/day-card";
+import { TravelPlanCard } from "@/components/trips/travel-plan-card";
 import { TripDeleteButton } from "@/components/trips/trip-delete-button";
 import { TripShareButton } from "@/components/trips/trip-share-button";
 import { getCurrentUser } from "@/lib/auth/session";
@@ -31,6 +33,17 @@ import {
 } from "@/lib/trips/monitoring";
 import { buildMapPath } from "@/lib/trips/map-path";
 import { toPublicTripShareData } from "@/lib/trips/share-view";
+import {
+  alignTravelPlanPitfallsWithSchedule,
+  normalizeScheduledText,
+  parseTravelDateRange,
+} from "@/lib/trips/travel-schedule";
+import {
+  alignTravelPlanAttractionsWithRoute,
+  ensureTravelPlanWeatherLocations,
+  getTravelRouteStats,
+  parseTravelPlanJson,
+} from "@/lib/trips/travel-plan";
 
 type TripPageProps = {
   params: Promise<{
@@ -45,6 +58,7 @@ function formatReminderKind(kind: string) {
   const labels: Record<string, string> = {
     depart_now: "现在出发",
     recheck: "路线复查",
+    weather_refresh: "天气刷新",
   };
 
   return labels[kind] ?? kind;
@@ -55,6 +69,7 @@ function formatTrigger(trigger?: string | null) {
     manual: "手动",
     reminder: "提醒",
     recheck: "路线复查",
+    weather_refresh: "天气刷新",
     scheduler: "调度器",
   };
 
@@ -71,6 +86,56 @@ function formatRecalculationStatus(status?: string | null) {
   };
 
   return status ? labels[status] ?? status : "未知";
+}
+
+function samePlacePart(reference: string, candidate?: string | null) {
+  if (!candidate) return false;
+  const ref = reference.toLowerCase().replace(/[\s（）()【】[\]·,，。]/g, "");
+  const cand = candidate.toLowerCase().replace(/[\s（）()【】[\]·,，。]/g, "");
+  if (!ref || !cand) return false;
+  return ref.includes(cand) || cand.includes(ref);
+}
+
+function dateKeyInTimeZone(
+  value: Date | null | undefined,
+  timeZone: string
+) {
+  if (!value) return undefined;
+
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function inferItineraryDateRange(
+  rawPrompt: string,
+  legs: readonly {
+    latestDepartAt: Date | null;
+    targetArriveAt: Date | null;
+  }[],
+  timeZone: string
+) {
+  const parsed = parseTravelDateRange(rawPrompt);
+  if (parsed) {
+    return { startDate: parsed.startDate, endDate: parsed.endDate };
+  }
+
+  const dates = legs
+    .flatMap((leg) => [leg.latestDepartAt, leg.targetArriveAt])
+    .map((value) => dateKeyInTimeZone(value, timeZone))
+    .filter((value): value is string => Boolean(value))
+    .sort();
+
+  if (dates.length === 0) return undefined;
+
+  return { startDate: dates[0], endDate: dates[dates.length - 1] };
 }
 
 export default async function TripDetailPage({
@@ -132,31 +197,49 @@ export default async function TripDetailPage({
 
   const tripTimeZone = trip.timezone;
   const primaryLeg = trip.legs[0];
-  const selectedCandidates = trip.legs.flatMap((leg) => {
+  const isTravelTrip = trip.agentSessions[0]?.purpose === "travel";
+  const selectedRouteLegs = trip.legs.flatMap((leg) => {
     const candidate =
       leg.selectedCandidate ??
       leg.routeCandidates.find((routeCandidate) => routeCandidate.selected) ??
       leg.routeCandidates[0];
 
-    return candidate ? [candidate] : [];
+    return candidate
+      ? [
+          {
+            order: leg.order,
+            title: candidate.title,
+            routeMinutes: candidate.routeMinutes,
+            bufferMinutes: candidate.bufferMinutes,
+            totalMinutes: candidate.totalMinutes,
+            mode: candidate.mode,
+            latestDepartAt: leg.latestDepartAt,
+            targetArriveAt: leg.targetArriveAt,
+          },
+        ]
+      : [];
   });
-  const totalRouteMinutes = selectedCandidates.reduce(
-    (sum, candidate) => sum + candidate.routeMinutes,
-    0
-  );
-  const totalBufferMinutes = selectedCandidates.reduce(
-    (sum, candidate) => sum + candidate.bufferMinutes,
-    0
-  );
+  const routeStats = getTravelRouteStats(selectedRouteLegs, tripTimeZone);
+  const selectedCandidates = selectedRouteLegs;
+  const totalRouteMinutes = routeStats.totalRouteMinutes;
+  const totalBufferMinutes = routeStats.totalBufferMinutes;
   const routeGroups = trip.legs.map((leg) => ({
     id: leg.id,
     title: `${leg.originName} 到 ${leg.destinationName}`,
     subtitle: [
       leg.latestDepartAt
-        ? `${formatTimeInTimeZone(leg.latestDepartAt, tripTimeZone)} 前出发`
+        ? `${
+            isTravelTrip
+              ? formatDateTimeInTimeZone(leg.latestDepartAt, tripTimeZone)
+              : formatTimeInTimeZone(leg.latestDepartAt, tripTimeZone)
+          } 前出发`
         : null,
       leg.targetArriveAt
-        ? `${formatTimeInTimeZone(leg.targetArriveAt, tripTimeZone)} 前到达`
+        ? `${
+            isTravelTrip
+              ? formatDateTimeInTimeZone(leg.targetArriveAt, tripTimeZone)
+              : formatTimeInTimeZone(leg.targetArriveAt, tripTimeZone)
+          } 前到达`
         : null,
     ]
       .filter(Boolean)
@@ -164,8 +247,8 @@ export default async function TripDetailPage({
     segments: leg.routeSegments.map((segment) => ({
       id: segment.id,
       mode: segment.mode,
-      title: segment.title,
-      detail: segment.detail,
+      title: normalizeScheduledText(segment.title) || "路线分段",
+      detail: normalizeScheduledText(segment.detail ?? undefined),
       minutes: segment.minutes,
     })),
   }));
@@ -207,12 +290,228 @@ export default async function TripDetailPage({
     now,
   });
   const agentSessionId = trip.agentSessions[0]?.id ?? trip.agentSessionId;
+
+  // Fetch sibling trips from the same planning session (multi-route variants).
+  const variantTrips = agentSessionId
+    ? await prisma.trip.findMany({
+        where: {
+          agentSessionId,
+          id: { not: trip.id },
+          userId: user.id,
+        },
+        select: {
+          id: true,
+          title: true,
+          finalStopName: true,
+          status: true,
+        },
+        orderBy: { createdAt: "asc" },
+      })
+    : [];
+  const itineraryDateRange = isTravelTrip
+    ? inferItineraryDateRange(trip.rawPrompt, trip.legs, tripTimeZone)
+    : undefined;
   const routeTitle =
     selectedCandidates.length > 1
       ? `已选择 ${selectedCandidates.length} 段路线`
       : selectedCandidates[0]?.title;
   const mapPath = buildMapPath(primaryLeg?.originName, trip.stops);
   const publicTrip = toPublicTripShareData(trip);
+  const parsedTravelPlan = parseTravelPlanJson(trip.travelPlanJson);
+  const travelPlanLegs = trip.legs.map((leg) => {
+    const candidate =
+      leg.selectedCandidate ??
+      leg.routeCandidates.find((routeCandidate) => routeCandidate.selected) ??
+      leg.routeCandidates[0];
+    return {
+      order: leg.order,
+      originName: leg.originName ?? undefined,
+      originLngLat: leg.originLngLat ?? undefined,
+      destinationName: leg.destinationName ?? undefined,
+      destinationLngLat: leg.destinationLngLat ?? undefined,
+      routeMinutes: candidate?.routeMinutes ?? 0,
+      mode: candidate?.mode,
+      latestDepartAt: leg.latestDepartAt ?? undefined,
+      targetArriveAt: leg.targetArriveAt ?? undefined,
+    };
+  });
+  const itineraryLegs: DayCardLeg[] = trip.legs.map((leg) => {
+    const candidate =
+      leg.selectedCandidate ??
+      leg.routeCandidates.find((routeCandidate) => routeCandidate.selected) ??
+      leg.routeCandidates[0];
+    return {
+      id: leg.id,
+      order: leg.order,
+      originName: leg.originName,
+      originLngLat: leg.originLngLat,
+      destinationName: leg.destinationName,
+      destinationLngLat: leg.destinationLngLat,
+      routeMinutes: candidate?.routeMinutes ?? 0,
+      bufferMinutes: candidate?.bufferMinutes ?? 0,
+      mode: candidate?.mode ?? null,
+      latestDepartAt: leg.latestDepartAt?.toISOString() ?? null,
+      targetArriveAt: leg.targetArriveAt?.toISOString() ?? null,
+      routeTitle: candidate?.title ?? null,
+    };
+  });
+
+  // Group legs by calendar day in the trip timezone.
+  const dayGroups: { date: string; legs: DayCardLeg[] }[] = [];
+  for (const leg of itineraryLegs) {
+    if (!leg.latestDepartAt) continue;
+    const dayKey = dateKeyInTimeZone(new Date(leg.latestDepartAt), tripTimeZone);
+    if (!dayKey) continue;
+    let group = dayGroups.find((g) => g.date === dayKey);
+    if (!group) {
+      group = { date: dayKey, legs: [] };
+      dayGroups.push(group);
+    }
+    group.legs.push(leg);
+  }
+
+  const displayTravelPlan = parsedTravelPlan
+    ? alignTravelPlanPitfallsWithSchedule(
+        parsedTravelPlan,
+        travelPlanLegs,
+        trip.rawPrompt,
+        tripTimeZone
+      )
+    : null;
+  const displayRouteStops = trip.stops.map((stop) => ({
+    order: stop.order,
+    name: stop.name,
+    address: stop.address,
+    lngLat: stop.lngLat,
+    kind: stop.kind,
+    notes: stop.notes,
+  }));
+  const travelPlan = displayTravelPlan
+    ? ensureTravelPlanWeatherLocations(
+        alignTravelPlanAttractionsWithRoute(
+          displayTravelPlan,
+          displayRouteStops,
+          travelPlanLegs
+        ),
+        displayRouteStops
+      )
+    : null;
+
+  // Map stops to day groups via the arrival leg's targetArriveAt date.
+  const dayCardsData = dayGroups.map((group, dayIndex) => {
+    const dayStops: DayCardStop[] = [];
+    for (const stop of trip.stops) {
+      const arrivalLeg = itineraryLegs.find(
+        (leg) => leg.destinationName === stop.name
+      );
+      const stopDate = arrivalLeg?.targetArriveAt
+        ? dateKeyInTimeZone(new Date(arrivalLeg.targetArriveAt), tripTimeZone)
+        : null;
+      if (stop.order === 0 && dayIndex === 0) {
+        dayStops.push({
+          id: stop.id,
+          order: stop.order,
+          name: stop.name,
+          kind: stop.kind,
+          address: stop.address,
+          lngLat: stop.lngLat,
+          targetArriveAt: stop.targetArriveAt?.toISOString() ?? null,
+          plannedStayMin: stop.plannedStayMin,
+        });
+      } else if (stopDate === group.date) {
+        dayStops.push({
+          id: stop.id,
+          order: stop.order,
+          name: stop.name,
+          kind: stop.kind,
+          address: stop.address,
+          lngLat: stop.lngLat,
+          targetArriveAt: stop.targetArriveAt?.toISOString() ?? null,
+          plannedStayMin: stop.plannedStayMin,
+        });
+      }
+    }
+    for (const leg of group.legs) {
+      const originStop = trip.stops.find(
+        (s) =>
+          s.name === leg.originName &&
+          !dayStops.some((ds) => ds.name === s.name)
+      );
+      if (originStop) {
+        dayStops.push({
+          id: originStop.id,
+          order: originStop.order,
+          name: originStop.name,
+          kind: originStop.kind,
+          address: originStop.address,
+          lngLat: originStop.lngLat,
+          targetArriveAt: originStop.targetArriveAt?.toISOString() ?? null,
+          plannedStayMin: originStop.plannedStayMin,
+        });
+      }
+    }
+    dayStops.sort((a, b) => a.order - b.order);
+
+    const dayRisk = travelPlan?.weather.routeRisks?.find((risk) =>
+      group.legs.some((leg) => leg.order === risk.legOrder)
+    );
+
+    // Weather APIs (AMap, Caiyun free) only cover ~3 days ahead. Days beyond
+    // that should not show a misleading risk badge — tell the user to refresh
+    // closer to departure.
+    const todayKey = dateKeyInTimeZone(now, tripTimeZone) ?? "";
+    const dayOffset = Math.round(
+      (new Date(group.date).getTime() - new Date(todayKey).getTime()) /
+        86_400_000
+    );
+    const withinForecastRange = dayOffset <= 3;
+    const dayNum = dayIndex + 1;
+    const dayForecast = travelPlan?.weather.forecast?.find(
+      (f) => f.date === group.date || f.day === dayNum
+    );
+
+    // Filter lodging/food/pitfalls to this day.
+    // Priority 1: notes contain D{dayNum} / 第{dayNum}天 marker.
+    // Priority 2: area or name matches one of the day's stop names.
+    const stopNames = dayStops.map((s) => s.name);
+    const dayMarker = new RegExp(`D${dayNum}\\b|第${dayNum}天`, "i");
+
+    const matchesDay = (item: { area?: string; name: string; notes?: string }) => {
+      // Check notes for explicit day markers like "D2晚餐" or "D1/D8夜宿".
+      if (item.notes && dayMarker.test(item.notes)) return true;
+      // Fallback: match by area/name against stop names.
+      return stopNames.some(
+        (name) =>
+          samePlacePart(name, item.area) ||
+          samePlacePart(name, item.name) ||
+          (item.notes ? samePlacePart(name, item.notes) : false)
+      );
+    };
+
+    const dayLodging = travelPlan
+      ? travelPlan.lodging.filter(matchesDay)
+      : [];
+    const dayFood = travelPlan ? travelPlan.food.filter(matchesDay) : [];
+    const dayPitfalls = travelPlan
+      ? travelPlan.pitfalls.filter((item) =>
+          dayMarker.test(item.detail + " " + item.title)
+        )
+      : [];
+
+    return {
+      dayNumber: dayNum,
+      date: group.date,
+      legs: group.legs,
+      stops: dayStops,
+      weatherRisk: dayRisk,
+      weatherSummary: dayIndex === 0 ? travelPlan?.weather.summary : undefined,
+      forecast: withinForecastRange ? dayForecast : undefined,
+      withinForecastRange,
+      lodging: dayLodging,
+      food: dayFood,
+      pitfalls: dayPitfalls,
+    };
+  });
 
   return (
     <AppShell active="history">
@@ -251,6 +550,31 @@ export default async function TripDetailPage({
             </div>
           </div>
         </header>
+
+        {variantTrips.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-[#93c5fd]/55 bg-[#eff6ff] px-4 py-3">
+            <span className="text-xs font-bold text-[#1e40af]">其他路线：</span>
+            {variantTrips.map((variant, index) => (
+              <Link
+                className="rounded-full bg-white/70 px-3 py-1.5 text-xs font-bold text-[#2563eb] transition hover:bg-white"
+                href={`/trips/${variant.id}`}
+                key={variant.id}
+              >
+                路线 {index + 2} · {variant.finalStopName ?? variant.title}
+              </Link>
+            ))}
+          </div>
+        ) : null}
+
+        {travelPlan ? (
+          <TravelPlanCard
+            plan={travelPlan}
+            routeStats={isTravelTrip ? routeStats : undefined}
+            itineraryDateRange={itineraryDateRange}
+            hideRouteRisks={isTravelTrip}
+            showOnlyAlternativeAttractions={isTravelTrip}
+          />
+        ) : null}
 
         <GlassCard className="p-5">
           <div className="grid min-w-0 gap-5 md:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
@@ -300,12 +624,37 @@ export default async function TripDetailPage({
           </div>
         </GlassCard>
 
-        <GlassCard className="p-5">
-          <h2 className="text-lg font-bold text-[#191c1e]">路线分段</h2>
-          <div className="mt-3">
-            <RouteTimeline groups={routeGroups} />
+        {isTravelTrip && travelPlan && dayCardsData.length > 0 ? (
+          <div className="space-y-4">
+            <h2 className="text-lg font-bold text-[#191c1e]">每日行程</h2>
+            {dayCardsData.map((day) => (
+              <DayCard
+                attractions={travelPlan.attractions}
+                date={day.date}
+                dayNumber={day.dayNumber}
+                food={day.food}
+                forecast={day.forecast}
+                key={day.date}
+                legs={day.legs}
+                lodging={day.lodging}
+                pitfalls={day.pitfalls}
+                stops={day.stops}
+                timezone={tripTimeZone}
+                tripId={trip.id}
+                weatherRisk={day.weatherRisk}
+                weatherSummary={day.weatherSummary}
+                withinForecastRange={day.withinForecastRange}
+              />
+            ))}
           </div>
-        </GlassCard>
+        ) : (
+          <GlassCard className="p-5">
+            <h2 className="text-lg font-bold text-[#191c1e]">路线分段</h2>
+            <div className="mt-3">
+              <RouteTimeline groups={routeGroups} />
+            </div>
+          </GlassCard>
+        )}
 
         <GlassCard className="p-5">
           <div className="flex items-center gap-2">

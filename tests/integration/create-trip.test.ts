@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
 import { createPlannedTrip } from "@/lib/trips/create-trip";
+import type { TravelPlan } from "@/lib/trips/travel-plan";
 import { ensureTestDatabase } from "./test-db";
 
 describe("createPlannedTrip", () => {
@@ -139,16 +140,11 @@ describe("createPlannedTrip", () => {
         )?.minutes
       ).toBe(0);
       expect(leg.reminderJobs.map((job) => job.kind)).toEqual([
-        "recheck",
-        "recheck",
-        "recheck",
-        "recheck",
-        "recheck",
         "depart_now",
       ]);
     }
 
-    expect(persisted.reminderJobs).toHaveLength(12);
+    expect(persisted.reminderJobs).toHaveLength(2);
   });
 
   it("accepts destination stops with explicit leg endpoints", async () => {
@@ -223,7 +219,211 @@ describe("createPlannedTrip", () => {
         (component) => component.category === "weather_context"
       )?.minutes
     ).toBe(0);
-    expect(persisted.legs[0].reminderJobs).toHaveLength(6);
+    expect(persisted.legs[0].reminderJobs).toHaveLength(1);
+  });
+
+  it("persists the structured travel plan alongside the itinerary graph", async () => {
+    const user = await prisma.user.create({
+      data: {
+        email: `trip-travel-plan-${Date.now()}@example.com`,
+        name: "旅行规划用户",
+        passwordHash: "hash",
+      },
+    });
+    const travelPlan: TravelPlan = {
+      destination: "宁波",
+      summary: "两天旅行规划",
+      days: 2,
+      weather: {
+        city: "宁波",
+        summary: "多云，24°C",
+        advice: "自然景点留意降雨",
+        source: "高德天气参考",
+      },
+      transport: {
+        recommended: "mixed",
+        reason: "郊区自驾与市区公共交通结合",
+        driving: {
+          summary: "约 36 分钟",
+          reason: "方便串联郊区景点",
+          durationMinutes: 36,
+        },
+        transit: {
+          summary: "约 48 分钟",
+          reason: "市区停车压力小",
+          durationMinutes: 48,
+        },
+        localMovement: "市内优先公共交通",
+      },
+      attractions: [
+        {
+          name: "东钱湖",
+          category: "natural",
+          reason: "自然景观",
+          day: 1,
+        },
+        {
+          name: "天一阁",
+          category: "cultural",
+          reason: "历史人文",
+          day: 2,
+        },
+      ],
+      lodging: [
+        {
+          name: "鼓楼周边",
+          area: "市中心",
+          reason: "交通和餐饮集中",
+        },
+      ],
+      food: [
+        {
+          name: "宁波本帮菜",
+          mustTry: "海鲜和汤圆",
+          reason: "本地口味代表",
+        },
+      ],
+      pitfalls: [
+        {
+          title: "先查预约",
+          detail: "热门景点先看官方公告",
+          severity: "high",
+        },
+      ],
+    };
+
+    const trip = await createPlannedTrip({
+      userId: user.id,
+      rawPrompt: "规划宁波两日旅行",
+      timezone: "Asia/Shanghai",
+      title: "宁波旅行",
+      finalStopName: "宁波",
+      stops: [
+        {
+          order: 1,
+          name: "宁波",
+          lngLat: "121.55,29.87",
+          kind: "destination",
+        },
+      ],
+      legs: [
+        {
+          order: 1,
+          originName: "北京",
+          originLngLat: "116.4,39.9",
+          destinationName: "宁波",
+          destinationLngLat: "121.55,29.87",
+          routeMinutes: 120,
+          mode: "mixed",
+        },
+      ],
+      travelPlan,
+    });
+
+    const persisted = await prisma.trip.findUniqueOrThrow({
+      where: { id: trip.id },
+    });
+
+    expect(persisted.travelPlanJson).toBe(JSON.stringify(travelPlan));
+    expect(JSON.parse(persisted.travelPlanJson ?? "null")).toMatchObject({
+      destination: "宁波",
+      transport: { recommended: "mixed" },
+      attractions: expect.arrayContaining([
+        expect.objectContaining({ category: "natural" }),
+        expect.objectContaining({ category: "cultural" }),
+      ]),
+    });
+  });
+
+  it("binds structured travel legs to adjacent persisted stops", async () => {
+    const user = await prisma.user.create({
+      data: {
+        email: `trip-travel-continuity-${Date.now()}@example.com`,
+        name: "旅行路线连续性用户",
+        passwordHash: "hash",
+      },
+    });
+    const travelPlan: TravelPlan = {
+      destination: "锡林郭勒",
+      summary: "三站旅行路线",
+      weather: {
+        city: "锡林郭勒",
+        summary: "天气待刷新",
+        advice: "出发前刷新",
+      },
+      transport: {
+        recommended: "driving",
+        reason: "景点分散",
+        driving: { summary: "自驾", reason: "灵活", durationMinutes: 60 },
+        transit: { summary: "公共交通", reason: "换乘多", durationMinutes: 120 },
+      },
+      attractions: [],
+      lodging: [],
+      food: [],
+      pitfalls: [],
+    };
+
+    const trip = await createPlannedTrip({
+      userId: user.id,
+      rawPrompt: "规划2026年8月8日至10日的旅行",
+      timezone: "Asia/Shanghai",
+      title: "测试旅行",
+      stops: [
+        { order: 2, name: "锡林浩特", kind: "destination" },
+        { order: 0, name: "北京", kind: "origin" },
+        { order: 1, name: "正蓝旗", kind: "waypoint" },
+      ],
+      legs: [
+        {
+          order: 1,
+          originName: "正蓝旗",
+          destinationName: "锡林浩特",
+          routeMinutes: 240,
+          mode: "driving",
+          latestDepartAt: new Date("2026-08-09T00:00:00.000Z"),
+          targetArriveAt: new Date("2026-08-09T04:00:00.000Z"),
+        },
+        {
+          order: 0,
+          originName: "北京",
+          destinationName: "正蓝旗",
+          routeMinutes: 300,
+          mode: "driving",
+          latestDepartAt: new Date("2026-08-08T00:00:00.000Z"),
+          targetArriveAt: new Date("2026-08-08T05:00:00.000Z"),
+        },
+      ],
+      travelPlan,
+    });
+
+    const persisted = await prisma.trip.findUniqueOrThrow({
+      where: { id: trip.id },
+      include: {
+        stops: { orderBy: { order: "asc" } },
+        legs: { orderBy: { order: "asc" } },
+      },
+    });
+
+    expect(persisted.stops.map((stop) => stop.name)).toEqual([
+      "北京",
+      "正蓝旗",
+      "锡林浩特",
+    ]);
+    expect(
+      persisted.legs.map((leg) => [
+        leg.fromStopId
+          ? persisted.stops.find((stop) => stop.id === leg.fromStopId)?.name
+          : null,
+        leg.toStopId
+          ? persisted.stops.find((stop) => stop.id === leg.toStopId)?.name
+          : null,
+        leg.originName,
+        leg.destinationName,
+      ])
+    ).toEqual([
+      ["北京", "正蓝旗", "北京", "正蓝旗"],
+      ["正蓝旗", "锡林浩特", "正蓝旗", "锡林浩特"],
+    ]);
   });
 
   it("normalizes created trip titles to origin-destination", async () => {

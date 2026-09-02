@@ -25,13 +25,30 @@ import {
 export { getAgentConversationHref } from "@/lib/app-routes";
 export { buildAgentEvents, formatAgentToolName } from "@/lib/agent/events";
 
+type VariantTrip = {
+  id: string;
+  title: string;
+  status: string;
+  finalStopName: string | null;
+  targetArriveAt: string | null;
+};
+
+type RouteTheme = {
+  label: string;
+  focus: string;
+};
+
 type AgentSessionPayload = {
   id: string;
   tripId?: string | null;
+  selectedTripId?: string | null;
   status: string;
+  purpose?: string;
   prompt: string;
   messages: AgentMessageEventSource[];
   toolCalls: AgentToolCallEventSource[];
+  routeThemes?: RouteTheme[] | null;
+  variantTrips?: VariantTrip[];
 };
 
 const TERMINAL_STATUSES = new Set(["completed", "failed", "timed_out", "cancelled"]);
@@ -42,12 +59,14 @@ export function getAgentSessionViewState({
   session,
 }: {
   autoRedirect: boolean;
-  session?: Pick<AgentSessionPayload, "status" | "tripId"> | null;
+  session?: Pick<AgentSessionPayload, "status" | "tripId" | "variantTrips"> | null;
 }) {
   const status = session?.status ?? "loading";
   const isTerminal = session ? TERMINAL_STATUSES.has(status) : false;
+  const hasVariants = (session?.variantTrips?.length ?? 0) > 1;
+  // When multiple route variants exist, do not auto-redirect; show the picker.
   const redirectTo =
-    autoRedirect && status === "completed" && session?.tripId
+    autoRedirect && status === "completed" && session?.tripId && !hasVariants
       ? `/trips/${session.tripId}`
       : null;
 
@@ -57,6 +76,7 @@ export function getAgentSessionViewState({
     redirectDelayMs: redirectTo ? REDIRECT_DELAY_MS : 0,
     redirectTo,
     status,
+    hasVariants,
   };
 }
 
@@ -250,6 +270,7 @@ export function AgentEventList({
   const viewState = getAgentSessionViewState({ autoRedirect, session });
   const isSendDisabled = isSending || viewState.status === "running";
   const canSendMessages = allowMessages ?? !autoRedirect;
+  const isTravel = session?.purpose === "travel";
 
   return (
     <section className="space-y-4">
@@ -259,7 +280,7 @@ export function AgentEventList({
             智能体会话
           </p>
           <h1 className="mt-1 text-2xl font-bold text-[#191c1e]">
-            正在规划你的通勤
+            {isTravel ? "正在规划你的旅行" : "正在规划你的通勤"}
           </h1>
         </div>
         <div className="flex items-center gap-2 rounded-full bg-[#dae2fd] px-3 py-2 text-sm font-bold text-[#3f465c]">
@@ -282,6 +303,15 @@ export function AgentEventList({
         </p>
       ) : null}
 
+      {viewState.hasVariants && session?.variantTrips ? (
+        <RouteVariantPicker
+          sessionId={session.id}
+          themes={session.routeThemes ?? null}
+          trips={session.variantTrips}
+          selectedTripId={session.selectedTripId ?? null}
+        />
+      ) : null}
+
       {canSendMessages ? (
         <form className="rounded-2xl bg-white/60 p-3" onSubmit={onSendMessage}>
           <div className="flex gap-2">
@@ -290,7 +320,11 @@ export function AgentEventList({
               className="min-w-0 flex-1 rounded-full bg-[#f2f4f6] px-4 py-3 text-sm font-medium text-[#191c1e] outline-none ring-[#2563eb]/20 transition placeholder:text-[#737686] focus:bg-white focus:ring-4"
               disabled={isSendDisabled}
               onChange={(event) => setMessage(event.target.value)}
-              placeholder="继续补充你的通勤需求"
+              placeholder={
+                isTravel
+                  ? "继续补充预算、节奏或旅行偏好"
+                  : "继续补充你的通勤需求"
+              }
               value={message}
             />
             <button
@@ -383,5 +417,90 @@ export function AgentEventList({
         </div>
       </div>
     </section>
+  );
+}
+
+function RouteVariantPicker({
+  sessionId,
+  themes,
+  trips,
+  selectedTripId,
+}: {
+  sessionId: string;
+  themes: RouteTheme[] | null;
+  trips: VariantTrip[];
+  selectedTripId: string | null;
+}) {
+  const [selecting, setSelecting] = useState<string | null>(null);
+
+  async function handleSelect(tripId: string) {
+    setSelecting(tripId);
+    try {
+      await fetch(`/api/agent-sessions/${sessionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ selectedTripId: tripId }),
+      });
+      window.location.href = `/trips/${tripId}`;
+    } catch {
+      setSelecting(null);
+    }
+  }
+
+  return (
+    <div className="rounded-2xl border border-[#93c5fd]/55 bg-[#eff6ff] p-4">
+      <div className="flex items-center gap-2">
+        <CheckCircle2 aria-hidden="true" className="size-5 text-[#2563eb]" />
+        <h2 className="text-base font-bold text-[#191c1e]">
+          规划完成 · 选择你的路线
+        </h2>
+      </div>
+      <p className="mt-1 text-xs leading-5 text-[#1e40af]">
+        AI 生成了 {trips.length} 条不同风格的路线，点击查看详情并选定一条进入监控。
+      </p>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {trips.map((trip, index) => {
+          const theme = themes?.[index];
+          const isSelected = selectedTripId === trip.id;
+          return (
+            <button
+              className={`flex flex-col items-start gap-1 rounded-xl border p-3 text-left transition ${
+                isSelected
+                  ? "border-[#2563eb] bg-white shadow-sm"
+                  : "border-[#c3c6d7]/50 bg-white/70 hover:border-[#93c5fd]"
+              }`}
+              key={trip.id}
+              onClick={() => handleSelect(trip.id)}
+              type="button"
+            >
+              <div className="flex w-full items-center justify-between gap-2">
+                <span className="text-[11px] font-bold uppercase tracking-wide text-[#2563eb]">
+                  路线 {index + 1}
+                </span>
+                {isSelected ? (
+                  <span className="rounded-full bg-[#2563eb] px-2 py-0.5 text-[10px] font-bold text-white">
+                    已选
+                  </span>
+                ) : null}
+              </div>
+              <span className="break-words text-sm font-bold text-[#191c1e]">
+                {theme?.label ?? trip.title}
+              </span>
+              {theme?.focus ? (
+                <span className="text-[11px] leading-4 text-[#5b6072]">
+                  {theme.focus}
+                </span>
+              ) : null}
+              <span className="mt-1 text-[11px] font-semibold text-[#737686]">
+                {trip.finalStopName ?? "查看详情"}
+              </span>
+              <span className="text-[11px] text-[#2563eb]">
+                {selecting === trip.id ? "正在打开…" : "查看路线 →"}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }

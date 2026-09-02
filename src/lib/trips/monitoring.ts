@@ -154,7 +154,7 @@ export function formatReminderStatus({
       return "已过期";
     }
 
-    return kind === "recheck" ? "等待复查" : "等待提醒";
+    return kind === "depart_now" ? "等待提醒" : "等待复查";
   }
 
   const labels: Record<string, string> = {

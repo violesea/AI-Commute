@@ -26,11 +26,10 @@ function readDockerStage(dockerfile: string, stageName: string) {
 }
 
 describe("Docker configuration", () => {
-  it("defines web and scheduler services with persisted SQLite data", () => {
+  it("defines web service with persisted SQLite data", () => {
     const compose = readFileSync("docker-compose.yml", "utf8");
 
     expect(compose).toContain("web:");
-    expect(compose).toContain("scheduler:");
     expect(compose).toContain("./data:/app/data");
     expect(compose).toContain("env_file:");
     expect(compose).toContain("DATABASE_URL: file:/app/data/commute.db");
@@ -60,7 +59,6 @@ describe("Docker configuration", () => {
     const telegramPollScript = readFileSync("scripts/telegram-poll.ts", "utf8");
     const migrateBlock = readComposeServiceBlock(compose, "migrate");
     const webBlock = readComposeServiceBlock(compose, "web");
-    const schedulerBlock = readComposeServiceBlock(compose, "scheduler");
     const telegramBlock = readComposeServiceBlock(compose, "telegram");
 
     expect(packageJson).toContain('"telegram:poll": "tsx scripts/telegram-poll.ts"');
@@ -79,10 +77,6 @@ describe("Docker configuration", () => {
     expect(webBlock).toContain("depends_on:");
     expect(webBlock).toContain("migrate:");
     expect(webBlock).toContain("condition: service_completed_successfully");
-    expect(schedulerBlock).toContain("depends_on:");
-    expect(schedulerBlock).toContain("migrate:");
-    expect(schedulerBlock).toContain("condition: service_completed_successfully");
-    expect(schedulerBlock).toContain("restart: unless-stopped");
     expect(telegramBlock).toContain("npm run telegram:poll");
     expect(telegramBlock).toContain("$$TELEGRAM_BOT_TOKEN");
     expect(telegramBlock).toContain("sleep infinity");

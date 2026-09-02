@@ -42,6 +42,7 @@ import { MemoryDeleteButton } from "@/components/memories/memory-delete-button";
 import { BufferList } from "@/components/trips/buffer-list";
 import { TripDeleteButton } from "@/components/trips/trip-delete-button";
 import { RouteTimeline } from "@/components/trips/route-timeline";
+import { TravelPlanCard } from "@/components/trips/travel-plan-card";
 import { LoginForm } from "@app/login/login-form";
 import { credits } from "@app/settings/credits";
 import { ProjectAttribution } from "@app/settings/project-attribution";
@@ -465,6 +466,131 @@ describe("sample-aligned UI components", () => {
     expect(html).toContain("到达前后可能有小雨");
   });
 
+  it("renders the travel planning card sections and transport comparison", () => {
+    const html = renderToStaticMarkup(
+      <TravelPlanCard
+        plan={{
+          destination: "宁波",
+          summary: "两天旅行规划",
+          days: 2,
+          weather: {
+            city: "宁波",
+            summary: "多云，24°C",
+            advice: "自然景点留意降雨",
+            source: "高德天气参考",
+            forecastAvailableThrough: "2026-08-06",
+            dynamicMonitoring: true,
+            refreshPolicy: "出发前和每次路线复查",
+            forecast: [
+              {
+                date: "2026-08-03",
+                day: 1,
+                summary: "多云，24°C",
+                risk: "medium",
+                drivingAdvice: "出发前复查路况",
+                outdoorAdvice: "保留室内备选",
+              },
+            ],
+            routeRisks: [
+              {
+                legOrder: 1,
+                route: "北京 → 宁波",
+                summary: "有降雨概率",
+                risk: "medium",
+                drivingAdvice: "降低自驾优先级",
+                action: "必要时切换公共交通",
+              },
+            ],
+          },
+          transport: {
+            recommended: "mixed",
+            reason: "模型估算自驾约 15.5 小时，公共交通约 48 分钟",
+            driving: {
+              summary: "约 36 分钟",
+              reason: "方便串联景点",
+              durationMinutes: 36,
+            },
+            transit: {
+              summary: "约 48 分钟",
+              reason: "市区停车压力小",
+              durationMinutes: 48,
+            },
+          },
+          attractions: [
+            {
+              name: "东钱湖",
+              category: "natural",
+              reason: "自然景观",
+              routeStatus: "planned",
+            },
+            {
+              name: "天一阁",
+              category: "cultural",
+              reason: "历史人文",
+              routeStatus: "alternative",
+            },
+          ],
+          lodging: [
+            {
+              name: "鼓楼周边",
+              area: "市中心",
+              reason: "交通和餐饮集中",
+            },
+          ],
+          food: [
+            {
+              name: "宁波本帮菜",
+              mustTry: "海鲜和汤圆",
+              reason: "本地口味代表",
+            },
+          ],
+          pitfalls: [
+            {
+              title: "先查预约",
+              detail: "热门景点先看官方公告",
+              severity: "high",
+            },
+          ],
+        }}
+        routeStats={{
+          totalRouteMinutes: 1195,
+          totalBufferMinutes: 76,
+          totalMinutes: 1271,
+          totalDrivingMinutes: 1195,
+          dailyDrivingMinutes: [
+            { date: "2026-08-08", minutes: 262, legOrders: [1, 2] },
+            { date: "2026-08-09", minutes: 209, legOrders: [3] },
+          ],
+        }}
+      />
+    );
+
+    expect(html).toContain("旅行规划");
+    expect(html).toContain("结构化路线事实");
+    expect(html).toContain("自驾 1195 分钟");
+    expect(html).toContain("每日自驾：2026-08-08 262 分钟 · 2026-08-09 209 分钟");
+    expect(html).toContain("天气参考");
+    expect(html).toContain("当前可用预报：截至 2026-08-06");
+    expect(html).toContain("自驾天气动态监控已开启");
+    expect(html).toContain("最近天气刷新：未记录");
+    expect(html).toContain("证据：AI建议，出发前核验");
+    expect(html).toContain("行程天气与自驾影响");
+    expect(html).toContain("自驾路段天气风险");
+    expect(html).toContain("自驾方案");
+    expect(html).toContain("按已落盘路线，自驾 1195 分钟（约 19.9 小时）");
+    expect(html).toContain("自驾总时长以已落盘路线事实为准");
+    expect(html).not.toContain("模型估算自驾约 15.5 小时");
+    expect(html).toContain("公共交通方案");
+    expect(html).toContain("自然景观");
+    expect(html).toContain("人文历史");
+    expect(html).toContain("本次路线已安排 1 个景点，备选 / 顺路可选 1 个景点");
+    expect(html).toContain("已安排进路线");
+    expect(html).toContain("备选 / 顺路可选");
+    expect(html).toContain("住宿建议");
+    expect(html).toContain("美食建议");
+    expect(html).toContain("避坑提醒");
+  });
+
   it("renders route timeline segment titles", () => {
     const html = renderToStaticMarkup(
       <RouteTimeline
@@ -704,6 +830,38 @@ describe("sample-aligned UI components", () => {
     render(<CommuteInput />);
 
     expect(screen.getByRole("button", { name: "规划" })).toBeTruthy();
+  });
+
+  it("switches the home form to travel mode and submits its purpose", async () => {
+    const fetchMock = vi.fn(async () =>
+      Response.json(
+        { sessionId: "travel-session", status: "running" },
+        { status: 201 }
+      )
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<CommuteInput />);
+    fireEvent.click(screen.getByRole("tab", { name: "旅行" }));
+
+    const promptInput = screen.getByLabelText("搜索目的地");
+    expect((promptInput as HTMLInputElement).placeholder).toBe(
+      "去哪玩几天？如：周末自驾去承德"
+    );
+    fireEvent.change(promptInput, { target: { value: "周末去宁波两天" } });
+    fireEvent.click(screen.getByRole("button", { name: "规划旅行" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/agent-sessions",
+        expect.objectContaining({
+          body: JSON.stringify({
+            prompt: "周末去宁波两天",
+            purpose: "travel",
+          }),
+        })
+      );
+    });
   });
 
   it("keeps the home voice input control hidden", () => {
@@ -1229,10 +1387,10 @@ describe("sample-aligned UI components", () => {
     const html = renderToStaticMarkup(page);
 
     expect(html).toContain("AI Commute");
-    expect(html).toContain("ZhuChenyu");
+    expect(html).toContain("violesea");
     expect(html).toContain("GitHub");
     expect(html).toContain(
-      'href="https://github.com/zhuchenyu2008/Commute-Planner"'
+      'href="https://github.com/violesea/AI-Commute"'
     );
     expect(html).toContain("致谢名单");
   });
@@ -1322,6 +1480,7 @@ describe("sample-aligned UI components", () => {
     for (const selector of [
       "#defaultCity",
       "#timezone",
+      "#model",
       'input[type="search"]',
       "#routeChangeThresholdMinutes",
       "#telegramChatId",
@@ -1351,6 +1510,12 @@ describe("sample-aligned UI components", () => {
     expect(html).toContain("默认出发点");
     expect(html).toContain("北京时间（Asia/Shanghai）");
     expect(html).toContain("通勤方式倾向");
+    expect(html).toContain("通勤规划模型");
+    expect(html).toContain("模型接入");
+    expect(html).toContain("旅行规划模型：DeepSeek V4 Flash");
+    expect(html).toContain("测试当前模型接入");
+    expect(html).toContain("deepseek-v4-flash");
+    expect(html).toContain('name="model"');
     expect(html).toContain('name="timezone"');
     expect(html).toContain('name="routePreference"');
     expect(html).toContain('type="hidden"');
@@ -1886,6 +2051,98 @@ describe("sample-aligned UI components", () => {
       );
     });
     await screen.findByText("邮件测试已发送");
+  });
+
+  it("tests the selected planning model from settings", async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url) === "/api/settings/test-model" && init?.method === "POST") {
+        return Response.json({
+          result: {
+            status: "connected",
+            model: "deepseek-v4-flash",
+            latencyMs: 42,
+          },
+        });
+      }
+
+      return Response.json({ error: "unexpected request" }, { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <SettingsForm
+        values={{
+          defaultCity: "宁波",
+          timezone: "Asia/Shanghai",
+          model: "deepseek-v4-flash",
+          modelConfigured: true,
+          originName: "",
+          originLngLat: "",
+          routePreference: "balanced",
+          telegramChatId: "",
+          emailRecipient: "",
+        }}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "测试当前模型接入" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/settings/test-model",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ model: "deepseek-v4-flash" }),
+        })
+      );
+    });
+    await screen.findByText("接入成功：DeepSeek V4 Flash，耗时 42ms");
+  });
+
+  it("tests the fixed travel planning model separately", async () => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url) === "/api/settings/test-model" && init?.method === "POST") {
+        return Response.json({
+          result: {
+            status: "connected",
+            model: "deepseek-v4-flash",
+            latencyMs: 55,
+          },
+        });
+      }
+
+      return Response.json({ error: "unexpected request" }, { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <SettingsForm
+        values={{
+          defaultCity: "宁波",
+          timezone: "Asia/Shanghai",
+          model: "gpt-4o-mini",
+          modelConfigured: true,
+          originName: "",
+          originLngLat: "",
+          routePreference: "balanced",
+          telegramChatId: "",
+          emailRecipient: "",
+        }}
+      />
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "测试旅行模型接入" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/settings/test-model",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ model: "deepseek-v4-flash" }),
+        })
+      );
+    });
+    await screen.findByText("接入成功：DeepSeek V4 Flash，耗时 55ms");
   });
 
   it("shows detailed test notification failures in settings", async () => {

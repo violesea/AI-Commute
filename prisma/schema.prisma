@@ -40,6 +40,7 @@ model UserSettings {
   userId              String   @unique
   defaultCity         String   @default("宁波")
   timezone            String   @default("Asia/Shanghai")
+  model               String?
   originName          String?
   originLngLat        String?
   routePreference     String   @default("balanced")
@@ -56,21 +57,25 @@ model AgentSession {
   id          String          @id @default(cuid())
   userId      String
   tripId      String?
+  selectedTripId String?
   status      String          @default("running")
   purpose     String          @default("planning")
   prompt      String
   retryCount  Int             @default(0)
   timeoutMs   Int             @default(600000)
+  routeThemesJson String?
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
   user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   trip               Trip?               @relation(fields: [tripId], references: [id], onDelete: SetNull)
+  selectedTrip       Trip?               @relation("SessionSelectedTrip", fields: [selectedTripId], references: [id], onDelete: SetNull)
   messages           AgentMessage[]
   toolCalls          AgentToolCall[]
   telegramChatStates TelegramChatState[]
 
   @@index([userId])
   @@index([tripId])
+  @@index([selectedTripId])
   @@index([status])
 }
 
@@ -109,6 +114,7 @@ model Trip {
   agentSessionId  String?
   title           String
   rawPrompt       String
+  travelPlanJson  String?
   status          String             @default("planning")
   timezone        String
   targetArriveAt  DateTime?
@@ -117,6 +123,7 @@ model Trip {
   updatedAt       DateTime           @updatedAt
   user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   agentSessions      AgentSession[]
+  sessionSelectedBy  AgentSession[]      @relation("SessionSelectedTrip")
   stops              TripStop[]
   legs               TripLeg[]
   reminderJobs       ReminderJob[]
@@ -366,4 +373,3 @@ model MemoryCandidate {
   @@index([userId])
   @@index([status])
 }
-

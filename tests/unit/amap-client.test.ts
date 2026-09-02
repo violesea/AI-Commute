@@ -43,6 +43,7 @@ describe("createMockAmapClient", () => {
     expect(reference.kind).toBe("reference");
     expect(reference.city).toBe("宁波");
     expect(reference.summary).toContain("宁波");
+    expect(reference.forecast).toHaveLength(4);
   });
 
   it("returns a named reverse geocode result for browser coordinates", async () => {
@@ -69,17 +70,21 @@ describe("createMockAmapClient", () => {
     };
 
     const transit = await client.getTransitRoute(routeRequest);
+    const driving = await client.getDrivingRoute(routeRequest);
     const walking = await client.getWalkingRoute(routeRequest);
     const bicycling = await client.getBicyclingRoute(routeRequest);
 
     expect(transit.durationMinutes).toBeGreaterThan(0);
     expect(transit.summary).toContain("公交/地铁路线");
+    expect(driving.durationMinutes).toBeGreaterThan(0);
+    expect(driving.summary).toContain("驾车路线");
     expect(walking.durationMinutes).toBeGreaterThan(0);
     expect(walking.summary).toContain("步行路线");
     expect(bicycling.durationMinutes).toBeGreaterThan(0);
     expect(bicycling.summary).toContain("骑行路线");
-    expect([transit.mode, walking.mode, bicycling.mode]).toEqual([
+    expect([transit.mode, driving.mode, walking.mode, bicycling.mode]).toEqual([
       "transit",
+      "driving",
       "walking",
       "bicycling"
     ]);
@@ -116,6 +121,9 @@ describe("createAmapClient", () => {
       getTransitRoute: vi.fn(async () => {
         throw new Error("network down");
       }),
+      getDrivingRoute: vi.fn(async () => {
+        throw new Error("network down");
+      }),
       getWalkingRoute: vi.fn(async () => {
         throw new Error("network down");
       }),
@@ -140,6 +148,68 @@ describe("createAmapClient", () => {
 });
 
 describe("createRealAmapClient", () => {
+  it("requests live weather plus a multi-day forecast", async () => {
+    const requests: string[] = [];
+    const client = createRealAmapClient({
+      apiKey: "test-key",
+      throttle: { schedule: (job) => job() },
+      fetchImpl: vi.fn(async (url: string) => {
+        requests.push(url);
+        return new Response(
+          JSON.stringify({
+            status: "1",
+            lives: [
+              {
+                city: "宁波",
+                weather: "小雨",
+                temperature: "24",
+                winddirection: "东南",
+                windpower: "3",
+              },
+            ],
+            forecasts: [
+              {
+                city: "宁波",
+                casts: [
+                  {
+                    date: "2026-08-03",
+                    week: "一",
+                    dayweather: "小雨",
+                    nightweather: "阴",
+                    daytemp: "27",
+                    nighttemp: "22",
+                    daywind: "东南",
+                    daypower: "3",
+                  },
+                ],
+              },
+            ],
+          })
+        );
+      }) as typeof fetch,
+    });
+
+    const weather = await client.getWeather({ city: "宁波" });
+
+    expect(weather).toMatchObject({
+      kind: "reference",
+      city: "宁波",
+      summary: "小雨, 24°C, 东南风, 3级",
+      forecast: [
+        {
+          date: "2026-08-03",
+          dayWeather: "小雨",
+          nightWeather: "阴",
+          dayTemperature: 27,
+          nightTemperature: 22,
+          summary: expect.stringContaining("小雨"),
+        },
+      ],
+    });
+    expect(new URL(requests[0]).searchParams.get("extensions")).toBe("all");
+    expect(weather.observedAt).toEqual(expect.any(String));
+  });
+
   it("passes transit cityd, converts duration, and keeps raw route data", async () => {
     const requests: string[] = [];
     const client = createRealAmapClient({
@@ -171,6 +241,38 @@ describe("createRealAmapClient", () => {
       })
     );
     expect(new URL(requests[0]).searchParams.get("cityd")).toBe("杭州");
+  });
+
+  it("calls the AMap driving endpoint and converts path duration", async () => {
+    const requests: string[] = [];
+    const client = createRealAmapClient({
+      apiKey: "test-key",
+      throttle: { schedule: (job) => job() },
+      fetchImpl: vi.fn(async (url: string) => {
+        requests.push(url);
+        return new Response(
+          JSON.stringify({
+            status: "1",
+            route: { paths: [{ duration: "360" }] },
+          })
+        );
+      }) as typeof fetch,
+    });
+
+    const route = await client.getDrivingRoute({
+      origin: "121.1,29.1",
+      destination: "121.2,29.2",
+    });
+
+    expect(route).toMatchObject({
+      mode: "driving",
+      durationMinutes: 6,
+      summary: "驾车路线来自高德",
+    });
+    expect(new URL(requests[0]).pathname).toBe("/v3/direction/driving");
+    expect(new URL(requests[0]).searchParams.get("origin")).toBe(
+      "121.1,29.1"
+    );
   });
 
   it("throws on AMap status failures", async () => {

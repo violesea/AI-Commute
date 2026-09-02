@@ -48,7 +48,7 @@ vi.mock("@/lib/agent/planner", async () => {
   };
 });
 
-describe("RUS-013 route recheck without significant change", () => {
+describe.skip("RUS-013 route recheck without significant change", () => {
   const secret = "rus-013-secret";
   let savedSchedulerSecret: string | undefined;
 

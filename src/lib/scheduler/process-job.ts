@@ -2,6 +2,8 @@ import {
   AgentSessionAlreadyRunningError,
   AgentSessionNotFoundError,
   acceptAgentSessionMessage,
+  enrichTravelPlanWithLatestWeatherEvidence,
+  loadCompletedWeatherReferenceCities,
   runAcceptedContinuationSession,
   type RunPlanningSessionOptions,
 } from "@/lib/agent/planner";
@@ -24,6 +26,10 @@ import {
 import { sendTelegram } from "@/lib/notifications/telegram";
 import { completeTripMonitoringIfFinished } from "@/lib/trips/monitoring";
 import { replaceReminderSchedule } from "@/lib/trips/route-updates";
+import {
+  ensureTravelPlanWeatherLocations,
+  parseTravelPlanJson,
+} from "@/lib/trips/travel-plan";
 import {
   expireStaleReminderJobs,
   findDueReminderJobs,
@@ -106,6 +112,10 @@ function buildReminderText(job: DueReminderJob) {
 
   if (job.kind === "depart_now") {
     return `现在出发前往 ${destination}。提醒计划时间：${when}。`;
+  }
+
+  if (job.kind === "weather_refresh") {
+    return `出发前天气刷新：请重新确认前往 ${destination} 的天气、道路和景区开放状态。计划时间：${when}。`;
   }
 
   return `通勤提醒：前往 ${destination}。智能体已在 ${when} 复查路线。`;
@@ -406,12 +416,20 @@ function buildRecheckMessage(job: DueReminderJob, thresholdMinutes: number) {
   const leg = job.leg;
   const destination =
     leg?.destinationName ?? job.trip.finalStopName ?? job.trip.title;
+  const isTravel = job.trip.agentSessions[0]?.purpose === "travel";
+  const isWeatherRefresh = job.kind === "weather_refresh";
 
   return [
     `路线复查：请重新核对当前行程 ${job.trip.title} 前往 ${destination} 的路线。`,
     `Current trip id: ${job.tripId}.`,
     `只要路线耗时或最晚出发时间变化没有大于 ${thresholdMinutes} 分钟，就保持现有提醒计划，不要主动通知用户。`,
     "如果变化大于阈值，请用当前路线更新工具修改行程路线或最晚出发时间；系统会据此刷新后续提醒并通知用户时间已变化。",
+    isTravel
+      ? "这是旅行行程：先调用 get_weather_reference 读取当前天气和可用预报，再重新评估自驾路段、户外景点和公共交通替代方案。若天气或道路风险变化，即使路线分钟数未超过阈值，也要用 update_trip_summary 或 replace_trip_stops/replace_trip_legs 写回包含最新 weather.forecast、weather.routeRisks、dynamicMonitoring 和 refreshPolicy 的 travelPlan。"
+      : "",
+    isWeatherRefresh
+      ? "这是出发前天气刷新任务：必须先读取最新天气，明确标注预报覆盖范围；若天气、道路或景区状态不确定，保留待核实说明并给出当日调整方案。"
+      : "",
   ].join("\n");
 }
 
@@ -624,6 +642,84 @@ async function refreshReminderScheduleAfterRouteChange(
   });
 }
 
+async function persistLatestTravelWeather(input: {
+  job: DueReminderJob;
+  sessionId: string;
+  refreshedAfter: Date;
+}) {
+  const weatherCall = await prisma.agentToolCall.findFirst({
+    where: {
+      agentSessionId: input.sessionId,
+      name: "get_weather_reference",
+      status: "completed",
+      createdAt: { gte: input.refreshedAfter },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { id: true },
+  });
+
+  if (!weatherCall) {
+    throw new Error(
+      "天气刷新失败：本次智能体复查没有完成 get_weather_reference，未写回旧天气快照。"
+    );
+  }
+
+  const trip = await prisma.trip.findUnique({
+    where: { id: input.job.tripId },
+    select: {
+      travelPlanJson: true,
+      stops: {
+        orderBy: { order: "asc" },
+        select: {
+          name: true,
+          order: true,
+          address: true,
+          lngLat: true,
+          kind: true,
+          notes: true,
+        },
+      },
+    },
+  });
+  if (!trip) {
+    throw new Error("天气刷新失败：行程不存在。");
+  }
+  const currentPlan = parseTravelPlanJson(trip.travelPlanJson);
+  if (!currentPlan) {
+    throw new Error("天气刷新失败：当前旅行行程没有可更新的结构化 travelPlan。");
+  }
+
+  const refreshedPlanWithWeather =
+    await enrichTravelPlanWithLatestWeatherEvidence(
+      currentPlan,
+      input.sessionId,
+      { minCreatedAt: input.refreshedAfter, replaceForecast: true }
+    );
+  const previousQueriedLocations =
+    currentPlan.weather.locations
+      ?.filter((location) => location.status === "queried")
+      .map((location) => location.name) ?? [];
+  const refreshedPlan = ensureTravelPlanWeatherLocations(
+    refreshedPlanWithWeather,
+    trip.stops,
+    [
+      ...previousQueriedLocations,
+      ...(await loadCompletedWeatherReferenceCities(input.sessionId, {
+        minCreatedAt: input.refreshedAfter,
+      })),
+    ]
+  );
+  await prisma.trip.update({
+    where: { id: input.job.tripId },
+    data: { travelPlanJson: JSON.stringify(refreshedPlan) },
+  });
+
+  return {
+    observedAt: refreshedPlan.weather.observedAt,
+    forecastAvailableThrough: refreshedPlan.weather.forecastAvailableThrough,
+  };
+}
+
 async function processRouteRecheckJob(
   job: DueReminderJob,
   now: Date,
@@ -637,12 +733,13 @@ async function processRouteRecheckJob(
 
   const thresholdMinutes = getRouteChangeThresholdMinutes(job);
   const sessionId = getSessionIdForRecheck(job);
+  const isWeatherRefresh = job.kind === "weather_refresh";
   const before = snapshotLeg(job.leg);
   const recalculation = await prisma.recalculationLog.create({
     data: {
       tripId: job.tripId,
       legId: job.legId ?? null,
-      trigger: "recheck",
+      trigger: job.kind === "weather_refresh" ? "weather_refresh" : "recheck",
       status: "running",
       summary: summarizeRecalculation(job),
     },
@@ -680,6 +777,14 @@ async function processRouteRecheckJob(
       return "failed";
     }
 
+    const weatherSnapshot = isWeatherRefresh
+      ? await persistLatestTravelWeather({
+          job,
+          sessionId,
+          refreshedAfter: recalculation.createdAt,
+        })
+      : undefined;
+
     const after = await loadCurrentLegSnapshot(job, before?.order);
     const changeMinutes = measureRouteChangeMinutes(before, after);
 
@@ -688,9 +793,16 @@ async function processRouteRecheckJob(
         job,
         status: "completed",
         recalculationId: recalculation.id,
-        summary: `路线复查完成：时间变化 ${changeMinutes.toFixed(
-          1
-        )} 分钟，未超过 ${thresholdMinutes} 分钟阈值。`,
+        summary: [
+          `路线复查完成：时间变化 ${changeMinutes.toFixed(
+            1
+          )} 分钟，未超过 ${thresholdMinutes} 分钟阈值。`,
+          weatherSnapshot
+            ? `天气快照已写回，预报截止 ${weatherSnapshot.forecastAvailableThrough ?? "未知"}。`
+            : "",
+        ]
+          .filter(Boolean)
+          .join(" "),
       });
       return "completed";
     }
@@ -779,7 +891,7 @@ async function processReminderJob(
   now: Date,
   agentOptions?: RunPlanningSessionOptions
 ): Promise<ReminderProcessStatus> {
-  if (job.kind === "recheck") {
+  if (job.kind === "recheck" || job.kind === "weather_refresh") {
     return processRouteRecheckJob(job, now, agentOptions);
   }
 

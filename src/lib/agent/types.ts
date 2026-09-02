@@ -2,9 +2,11 @@ export type AgentToolName =
   | "read_settings"
   | "read_memories"
   | "search_poi"
+  | "search_natural_attractions"
   | "get_poi_detail"
   | "get_weather_reference"
   | "get_transit_route"
+  | "get_driving_route"
   | "get_walking_route"
   | "get_bicycling_route"
   | "create_trip"
@@ -19,6 +21,8 @@ export type AgentToolName =
   | "cancel_trip_monitoring"
   | "create_memory_candidate";
 
+export type AgentPlanningPurpose = "planning" | "travel";
+
 export type AgentSessionStatus =
   | "running"
   | "completed"
@@ -30,6 +34,7 @@ export type AgentToolCallStatus = "running" | "completed" | "failed";
 export type StartPlanningSessionInput = {
   userId: string;
   prompt: string;
+  purpose?: AgentPlanningPurpose;
   currentLocation?: {
     name: string;
     lngLat: string;
@@ -47,6 +52,12 @@ export type PlanningSessionResult = {
   sessionId: string;
   status: AgentSessionStatus;
   tripId: string | null;
+  tripIds?: string[];
+};
+
+export type TravelRouteTheme = {
+  label: string;
+  focus: string;
 };
 
 export type PlanningAttemptResult = {

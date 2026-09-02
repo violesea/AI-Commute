@@ -75,6 +75,50 @@ describe("agent planning sessions", () => {
     ).resolves.toBe(0);
   });
 
+  it("starts travel planning without requiring a default commute origin", async () => {
+    const { POST } = await import("@app/api/agent-sessions/route");
+    const user = await prisma.user.create({
+      data: {
+        email: `travel-origin-optional-${Date.now()}@example.com`,
+        name: "Travel Origin Optional User",
+        passwordHash: "hash",
+        settings: {
+          create: {
+            defaultCity: "Ningbo",
+            timezone: "Asia/Shanghai",
+            originName: null,
+            originLngLat: null,
+            routePreference: "balanced",
+          },
+        },
+      },
+      include: { settings: true },
+    });
+    getCurrentUserMock.mockResolvedValue(user);
+
+    const response = await POST(
+      new Request("http://localhost/api/agent-sessions", {
+        method: "POST",
+        body: JSON.stringify({
+          prompt: "规划宁波两日旅行",
+          purpose: "travel",
+        }),
+      })
+    );
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.sessionId).toEqual(expect.any(String));
+    await expect(
+      prisma.agentSession.findUniqueOrThrow({
+        where: { id: payload.sessionId },
+      })
+    ).resolves.toMatchObject({
+      userId: user.id,
+      purpose: "travel",
+    });
+  });
+
   it("starts a visible running session with the initial user message", async () => {
     const user = await prisma.user.create({
       data: {
@@ -574,6 +618,102 @@ describe("agent planning sessions", () => {
     );
   });
 
+  it("bounds travel evidence gathering and exposes the driving comparison tool", async () => {
+    const user = await createUserWithSettings("agent-travel-prompt");
+    const session = await startPlanningSession({
+      userId: user.id,
+      prompt: "规划宁波两日旅行",
+      purpose: "travel",
+    });
+    let systemText = "";
+    let toolNames: string[] = [];
+    let createTripParameters: Record<string, unknown> | undefined;
+    let requestedModel: string | undefined;
+    const chatClient: AgentChatClient = {
+      async complete({ messages, tools, model }) {
+        systemText = messages
+          .filter((message) => message.role === "system")
+          .map((message) => message.content)
+          .join("\n");
+        requestedModel = model;
+        toolNames = tools.map((tool) => tool.name);
+        createTripParameters = tools.find((tool) => tool.name === "create_trip")
+          ?.parameters;
+        throw new Error("stop after travel prompt capture");
+      },
+    };
+
+    const result = await runPlanningSession(session.id, {
+      amapClient,
+      chatClient,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(systemText).toContain("one-to-three-day request");
+    expect(systemText).toContain("at most ten representative");
+    expect(systemText).toContain("at least three distinct natural candidates");
+    expect(systemText).toContain("weather.routeRisks");
+    expect(systemText).toContain("immediately call create_trip");
+    expect(toolNames).toContain("get_driving_route");
+    expect(toolNames).toContain("search_natural_attractions");
+    expect(requestedModel).toBe("deepseek-v4-flash");
+    expect(createTripParameters).toMatchObject({
+      required: expect.arrayContaining([
+        "travelPlan",
+        "budget",
+        "attractions",
+        "lodging",
+        "food",
+        "pitfalls",
+      ]),
+    });
+    const travelPlanProperties = (
+      createTripParameters?.properties as Record<string, unknown> | undefined
+    )?.travelPlan as Record<string, unknown> | undefined;
+    expect(travelPlanProperties?.required).not.toContain("attractions");
+    expect(travelPlanProperties?.properties).toHaveProperty("routeCoverage");
+  });
+
+  it("uses the user's selected model for commute planning", async () => {
+    const user = await createUserWithSettings("agent-selected-model", {
+      settings: {
+        create: {
+          defaultCity: "Ningbo",
+          timezone: "Asia/Shanghai",
+          model: "deepseek-v4-flash",
+          originName: "Home",
+          originLngLat: "121.1,29.1",
+          routePreference: "balanced",
+        },
+      },
+    });
+    const session = await startPlanningSession({
+      userId: user.id,
+      prompt: "Plan my commute to the office.",
+    });
+    let requestedModel: string | undefined;
+    let commuteCreateTripRequired: unknown;
+    const chatClient: AgentChatClient = {
+      async complete({ model, tools }) {
+        requestedModel = model;
+        commuteCreateTripRequired = (
+          tools.find((tool) => tool.name === "create_trip")?.parameters
+            .required as unknown[] | undefined
+        ) ?? [];
+        throw new Error("stop after selected model capture");
+      },
+    };
+
+    const result = await runPlanningSession(session.id, {
+      amapClient,
+      chatClient,
+    });
+
+    expect(result.status).toBe("failed");
+    expect(requestedModel).toBe("deepseek-v4-flash");
+    expect(commuteCreateTripRequired).not.toContain("travelPlan");
+  });
+
   it("lets the AI choose AMap tools, route mode, and buffer details", async () => {
     const user = await createUserWithSettings("agent-ai-led");
     const session = await startPlanningSession({
@@ -846,6 +986,68 @@ describe("agent planning sessions", () => {
     const persisted = await prisma.agentSession.findUniqueOrThrow({
       where: { id: session.id },
       include: { toolCalls: { orderBy: { createdAt: "asc" } } },
+    });
+    expect(
+      persisted.toolCalls.filter((toolCall) => toolCall.name === "search_poi")
+    ).toHaveLength(2);
+  });
+
+  it("reuses equivalent POI evidence within one planning session", async () => {
+    const user = await createUserWithSettings("agent-poi-cache");
+    const session = await startPlanningSession({
+      userId: user.id,
+      prompt: "Plan a route to the office.",
+    });
+    const baseAmapClient = createMockAmapClient();
+    const searchPoi = vi.fn(baseAmapClient.searchPoi);
+    const cachedAmapClient: AmapClient = {
+      ...baseAmapClient,
+      searchPoi,
+    };
+    let completeCalls = 0;
+    const chatClient: AgentChatClient = {
+      async complete({ messages }) {
+        completeCalls += 1;
+        const toolResultCount = messages.filter(
+          (message) => message.role === "tool"
+        ).length;
+
+        if (toolResultCount < 2) {
+          return {
+            message: {
+              role: "assistant",
+              content: "Reuse the same POI evidence.",
+              toolCalls: [
+                {
+                  id: `call-poi-cache-${completeCalls}`,
+                  name: "search_poi",
+                  arguments: { keywords: "办公室", city: "宁波" },
+                },
+              ],
+            },
+          };
+        }
+
+        return createTripToolResponse({
+          finalStopName: "办公室",
+          destinationLngLat: "121.5,29.8",
+          routeMinutes: 20,
+          mode: "walking",
+        });
+      },
+    };
+
+    const result = await runPlanningSession(session.id, {
+      amapClient: cachedAmapClient,
+      chatClient,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(searchPoi).toHaveBeenCalledTimes(1);
+    expect(completeCalls).toBe(3);
+    const persisted = await prisma.agentSession.findUniqueOrThrow({
+      where: { id: session.id },
+      include: { toolCalls: true },
     });
     expect(
       persisted.toolCalls.filter((toolCall) => toolCall.name === "search_poi")

@@ -9,6 +9,14 @@ type RecordToolCallInput<T> = {
   run(): Promise<T>;
 };
 
+type RecordFailedToolCallInput = {
+  agentSessionId: string;
+  name: AgentToolName;
+  request: unknown;
+  error: unknown;
+  signal?: AbortSignal;
+};
+
 const serialize = (value: unknown) => JSON.stringify(value ?? null);
 
 export function assertAgentRunActive(signal?: AbortSignal) {
@@ -64,4 +72,25 @@ export async function recordToolCall<T>({
 
     throw error;
   }
+}
+
+export async function recordFailedToolCall({
+  agentSessionId,
+  name,
+  request,
+  error,
+  signal,
+}: RecordFailedToolCallInput) {
+  assertAgentRunActive(signal);
+
+  return prisma.agentToolCall.create({
+    data: {
+      agentSessionId,
+      name,
+      status: "failed" satisfies AgentToolCallStatus,
+      requestJson: serialize(request),
+      durationMs: 0,
+      error: error instanceof Error ? error.message : String(error),
+    },
+  });
 }

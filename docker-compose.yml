@@ -19,26 +19,30 @@ services:
     environment:
       DATABASE_URL: file:/app/data/commute.db
     ports:
-      - "3000:3000"
+      - "3002:3000"
     volumes:
       - ./data:/app/data
     depends_on:
       migrate:
         condition: service_completed_successfully
 
-  scheduler:
-    build: .
-    command: sh -c "while true; do npm run scheduler:tick; sleep 60; done"
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      DATABASE_URL: file:/app/data/commute.db
-    volumes:
-      - ./data:/app/data
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
+  # Scheduler disabled — background recheck/weather_refresh removed.
+  # Users refresh each day manually via the DayCard refresh button.
+  # The depart_now reminder is still created but requires manual tick
+  # or can be re-enabled here if auto-notifications are needed again.
+  # scheduler:
+  #   build: .
+  #   command: sh -c "while true; do npm run scheduler:tick; sleep 60; done"
+  #   restart: unless-stopped
+  #   env_file:
+  #     - .env
+  #   environment:
+  #     DATABASE_URL: file:/app/data/commute.db
+  #   volumes:
+  #     - ./data:/app/data
+  #   depends_on:
+  #     migrate:
+  #       condition: service_completed_successfully
 
   telegram:
     build: .

@@ -140,12 +140,55 @@ async function ensureRouteChangeThresholdMigration() {
   }
 }
 
+async function ensureUserModelMigration() {
+  const columns = await prisma.$queryRawUnsafe<Array<{ name: string }>>(
+    "PRAGMA table_info('UserSettings')"
+  );
+  const hasModel = columns.some((column) => column.name === "model");
+
+  if (!hasModel) {
+    await executeMigration(
+      "prisma/migrations/20260803130000_user_model_setting/migration.sql"
+    );
+  }
+}
+
 async function ensureTripShareMigration() {
   const hasTripShare = await sqliteObjectExists("table", "TripShare");
 
   if (!hasTripShare) {
     await executeMigration(
       "prisma/migrations/20260720120000_trip_shares/migration.sql"
+    );
+  }
+}
+
+async function ensureTravelPlanMigration() {
+  const columns = await prisma.$queryRawUnsafe<Array<{ name: string }>>(
+    "PRAGMA table_info('Trip')"
+  );
+  const hasTravelPlan = columns.some(
+    (column) => column.name === "travelPlanJson"
+  );
+
+  if (!hasTravelPlan) {
+    await executeMigration(
+      "prisma/migrations/20260803110000_travel_plan/migration.sql"
+    );
+  }
+}
+
+async function ensureRouteThemesMigration() {
+  const columns = await prisma.$queryRawUnsafe<Array<{ name: string }>>(
+    "PRAGMA table_info('AgentSession')"
+  );
+  const hasSelectedTripId = columns.some(
+    (column) => column.name === "selectedTripId"
+  );
+
+  if (!hasSelectedTripId) {
+    await executeMigration(
+      "prisma/migrations/20260809104245_add_route_themes_and_selected_trip/migration.sql"
     );
   }
 }
@@ -205,7 +248,10 @@ export async function ensureTestDatabase() {
       await ensureOptionalOriginMigration();
       await ensureTelegramMigrations();
       await ensureRouteChangeThresholdMigration();
+      await ensureUserModelMigration();
       await ensureTripShareMigration();
+      await ensureTravelPlanMigration();
+      await ensureRouteThemesMigration();
     }
   });
 

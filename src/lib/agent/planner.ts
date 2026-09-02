@@ -8,8 +8,16 @@ import type {
   AgentChatToolCall,
   AgentChatToolDefinition,
 } from "@/lib/agent/chat-client";
-import { createOpenAiChatClient } from "@/lib/agent/chat-client";
-import { assertAgentRunActive, recordToolCall } from "@/lib/agent/tools";
+import {
+  createOpenAiChatClient,
+  TRAVEL_MAX_OUTPUT_TOKENS,
+  TRAVEL_PLANNING_MODEL,
+} from "@/lib/agent/chat-client";
+import {
+  assertAgentRunActive,
+  recordFailedToolCall,
+  recordToolCall,
+} from "@/lib/agent/tools";
 import { buildConfirmedMemoryContext } from "@/lib/memories/context";
 import type {
   AgentToolName,
@@ -17,6 +25,7 @@ import type {
   PlanningAttemptResult,
   PlanningSessionResult,
   StartPlanningSessionInput,
+  TravelRouteTheme,
 } from "@/lib/agent/types";
 import {
   AgentRunTimeoutError,
@@ -37,49 +46,100 @@ import type {
   PlannedTripLegInput,
   PlannedTripStopInput,
 } from "@/lib/trips/types";
+import {
+  alignTravelPlanAttractionsWithRoute,
+  alignTravelPlanDrivingDuration,
+  assertTravelPlanAttractionCoverage,
+  assertTravelPlanBudget,
+  assertTravelPlanOperationalCompleteness,
+  completeTravelPlanArrayPayload,
+  completeTravelPlanTransportPayload,
+  ensureTravelPlanWeatherCoverage,
+  ensureTravelPlanWeatherLocations,
+  normalizeTravelPlan,
+  parseTravelPlanJson,
+  summarizeTravelRouteEvidence,
+  type TravelPlan,
+  type TravelRecommendationEvidence,
+  type TravelRouteLegEvidence,
+  type TravelTransportEvidence,
+  type TravelWeatherForecast,
+} from "@/lib/trips/travel-plan";
+import {
+  addTravelSchedulePitfall,
+  alignTravelPlanPitfallsWithSchedule,
+  assertTravelItinerarySchedule,
+  ensureTravelPlanRouteRiskCoverage,
+  normalizeTravelItinerarySchedule,
+  parseTravelDateRange,
+} from "@/lib/trips/travel-schedule";
+import type { AgentPlanningPurpose } from "@/lib/agent/types";
 
 const SESSION_TIMEOUT_MS = 600000;
 const SESSION_MAX_ATTEMPTS = 2;
+const MAX_CONVERSATION_ROUNDS = {
+  planning: 10,
+  travel: 14,
+} as const;
+const MAX_CREATE_TRIP_FAILURES = 4;
+const MAX_IDENTICAL_CREATE_TRIP_FAILURES = 2;
+const ROUTE_EVIDENCE_QUOTA_RETRY_DELAY_MS = 1_100;
 const ORIGIN_REQUIRED_MESSAGE =
   "请先在设置中选择默认出发点，或在本次请求中提供出发点。";
-const LNG_LAT_PATTERN = /^-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?$/;
+const NATURAL_ATTRACTION_SEARCH_GROUPS = [
+  "山,峰,森林,森林公园,国家公园",
+  "湖,湿地,溪流,瀑布,峡谷",
+  "海,海岛,海滩,滨海,湾",
+  "公园,植物园,观景台,风景区",
+] as const;
 
-export { AgentRunTimeoutError };
-
-export class AgentSessionAlreadyRunningError extends Error {
-  constructor() {
-    super("Agent session is already running.");
-    this.name = "AgentSessionAlreadyRunningError";
-  }
-}
-
-export class AgentSessionNotFoundError extends Error {
-  constructor() {
-    super("Agent session not found.");
-    this.name = "AgentSessionNotFoundError";
-  }
-}
+export {
+  AgentConversationLimitError,
+  AgentRunTimeoutError,
+  AgentSessionAlreadyRunningError,
+  AgentSessionNotFoundError,
+  formatPlanningFailureMessage,
+} from "@/lib/agent/planner-errors";
+import {
+  AgentConversationLimitError,
+  AgentSessionAlreadyRunningError,
+  AgentSessionNotFoundError,
+  formatPlanningFailureMessage,
+} from "@/lib/agent/planner-errors";
 
 type PlanningSettings = {
   defaultCity: string;
   timezone: string;
+  model: string;
   originName: string;
   originLngLat: string;
   routePreference: string;
 };
 
+export type TravelEvidenceBudget = {
+  maxDirectPoiSearches: number;
+  directPoiSearches: number;
+  exhaustionNudgeSent: boolean;
+};
+
 export type RunPlanningSessionOptions = {
   chatClient?: AgentChatClient;
   amapClient?: AmapClient;
+  /** Skip multi-route theme generation; produce a single trip. For tests. */
+  singleRoute?: boolean;
 };
 
-type ToolExecutionContext = {
+export type ToolExecutionContext = {
   amap: AmapClient;
   sessionId: string;
   userId: string;
   prompt: string;
+  purpose: AgentPlanningPurpose;
   tripId?: string | null;
   signal?: AbortSignal;
+  toolResultCache: Map<string, unknown>;
+  travelEvidenceBudget?: TravelEvidenceBudget;
+  maxConversationRounds?: number;
 };
 
 const fallbackSettings = (): PlanningSettings => {
@@ -87,6 +147,7 @@ const fallbackSettings = (): PlanningSettings => {
   return {
     defaultCity: env.defaultCity,
     timezone: env.defaultTimezone,
+    model: env.openAiModel,
     originName: "",
     originLngLat: "",
     routePreference: "balanced",
@@ -96,6 +157,7 @@ const fallbackSettings = (): PlanningSettings => {
 function normalizePlanningSettings(settings: {
   defaultCity: string;
   timezone: string;
+  model: string | null;
   originName: string | null;
   originLngLat: string | null;
   routePreference: string;
@@ -103,6 +165,7 @@ function normalizePlanningSettings(settings: {
   return {
     defaultCity: settings.defaultCity,
     timezone: settings.timezone,
+    model: settings.model ?? fallbackSettings().model,
     originName: settings.originName ?? "",
     originLngLat: settings.originLngLat ?? "",
     routePreference: settings.routePreference,
@@ -118,27 +181,23 @@ function normalizePrompt(prompt: string) {
   return trimmed;
 }
 
-export function formatPlanningFailureMessage(error: unknown) {
-  if (error instanceof AgentRunTimeoutError) {
-    return "规划失败：智能体规划超时，请稍后重试。";
-  }
-
-  if (error instanceof Error) {
-    const knownMessages: Record<string, string> = {
-      "Agent run aborted.": "规划失败：智能体运行已中止。",
-      "timeoutMs must be greater than zero.":
-        "规划失败：内部运行超时配置无效。",
-      "maxAttempts must be greater than zero.":
-        "规划失败：内部重试配置无效。",
-      "Agent planning failed after all attempts.":
-        "规划失败：多次尝试后仍未完成，请稍后重试。",
-    };
-
-    return knownMessages[error.message] ?? `规划失败：${error.message}`;
-  }
-
-  return "规划失败：请稍后重试。";
-}
+import {
+  annotateTravelRouteEvidence,
+  attachRouteEvidenceSummary,
+  createTravelEvidenceBudget,
+  enrichTravelPlanWithToolEvidence,
+  getTravelDrivingLegOrders,
+  isTravelTransportValidationError,
+  loadCompletedWeatherReferenceCities,
+  loadTravelTransportEvidence,
+  parseRecordJson,
+  recordCachedToolCall,
+  resolveRouteEndpoint,
+} from "@/lib/agent/planner-evidence";
+export {
+  enrichTravelPlanWithLatestWeatherEvidence,
+  loadCompletedWeatherReferenceCities,
+} from "@/lib/agent/planner-evidence";
 
 async function createAssistantMessage(input: {
   sessionId: string;
@@ -160,360 +219,33 @@ async function createAssistantMessage(input: {
   return message;
 }
 
-function objectParameters(
-  properties: Record<string, unknown>,
-  required: string[] = []
-) {
-  return {
-    type: "object",
-    properties,
-    required,
-    additionalProperties: false,
-  };
-}
+import {
+  TOOL_DEFINITIONS,
+  getAgentToolDefinitions,
+} from "@/lib/agent/planner-schemas";
+export { getAgentToolDefinitions } from "@/lib/agent/planner-schemas";
 
-function arrayOfItems(items: Record<string, unknown>) {
-  return {
-    type: "array",
-    items,
-  };
-}
+import {
+  buildCurrentLocationContext,
+  createContinuationMessages,
+  createInitialMessages,
+  getSystemPrompt,
+} from "@/lib/agent/planner-prompts";
 
-const bufferComponentSchema = objectParameters(
-  {
-    category: { type: "string" },
-    label: { type: "string" },
-    minutes: { type: "number" },
-    reason: { type: "string" },
-    source: {
-      type: "string",
-      enum: [
-        "agent_inference",
-        "user_setting",
-        "memory",
-        "weather_context",
-        "manual_override",
-      ],
-    },
-  },
-  ["category", "label", "minutes", "reason"]
-);
-
-const stopSchema = objectParameters(
-  {
-    order: { type: "number" },
-    name: { type: "string" },
-    address: { type: "string" },
-    lngLat: { type: "string" },
-    targetArriveAt: { type: "string" },
-    plannedStayMin: { type: "number" },
-    kind: { type: "string" },
-    notes: { type: "string" },
-  },
-  ["name"]
-);
-
-const legSchema = objectParameters(
-  {
-    order: { type: "number" },
-    originName: { type: "string" },
-    originLngLat: { type: "string" },
-    destinationName: { type: "string" },
-    destinationLngLat: { type: "string" },
-    routeMinutes: { type: "number" },
-    bufferMinutes: { type: "number" },
-    totalMinutes: { type: "number" },
-    bufferComponents: arrayOfItems(bufferComponentSchema),
-    latestDepartAt: { type: "string" },
-    targetArriveAt: { type: "string" },
-    mode: { type: "string" },
-    routeTitle: { type: "string" },
-    routeRationale: { type: "string" },
-    segmentTitle: { type: "string" },
-    segmentDetail: { type: "string" },
-    segmentSource: { type: "string" },
-    source: { type: "object" },
-  },
-  [
-    "originName",
-    "originLngLat",
-    "destinationName",
-    "routeMinutes",
-    "bufferComponents",
-  ]
-);
-
-const TOOL_DEFINITIONS: AgentChatToolDefinition[] = [
-  {
-    name: "read_settings",
-    description: "Read the user's city, timezone, default origin, and route preference.",
-    parameters: objectParameters({}),
-  },
-  {
-    name: "read_memories",
-    description: "Read confirmed commute memories and preferences.",
-    parameters: objectParameters({}),
-  },
-  {
-    name: "search_poi",
-    description: "Search AMap POIs by keyword.",
-    parameters: objectParameters(
-      {
-        keywords: { type: "string" },
-        city: { type: "string" },
-      },
-      ["keywords"]
-    ),
-  },
-  {
-    name: "get_poi_detail",
-    description: "Read AMap POI details.",
-    parameters: objectParameters({ id: { type: "string" } }, ["id"]),
-  },
-  {
-    name: "get_weather_reference",
-    description:
-      "Read AMap weather as reference evidence. The application does not hard-code weather rules.",
-    parameters: objectParameters({ city: { type: "string" } }, ["city"]),
-  },
-  {
-    name: "get_transit_route",
-    description:
-      "Query AMap transit route. origin and destination must be lng,lat coordinates; use search_poi to resolve place names first.",
-    parameters: objectParameters(
-      {
-        origin: { type: "string" },
-        destination: { type: "string" },
-        city: { type: "string" },
-        cityd: { type: "string" },
-      },
-      ["origin", "destination"]
-    ),
-  },
-  {
-    name: "get_walking_route",
-    description:
-      "Query AMap walking route. origin and destination must be lng,lat coordinates; use search_poi to resolve place names first.",
-    parameters: objectParameters(
-      {
-        origin: { type: "string" },
-        destination: { type: "string" },
-        city: { type: "string" },
-        cityd: { type: "string" },
-      },
-      ["origin", "destination"]
-    ),
-  },
-  {
-    name: "get_bicycling_route",
-    description:
-      "Query AMap bicycling route. origin and destination must be lng,lat coordinates; use search_poi to resolve place names first.",
-    parameters: objectParameters(
-      {
-        origin: { type: "string" },
-        destination: { type: "string" },
-        city: { type: "string" },
-        cityd: { type: "string" },
-      },
-      ["origin", "destination"]
-    ),
-  },
-  {
-    name: "create_trip",
-    description:
-      "Create the final planned trip after the AI has gathered evidence and made a decision.",
-    parameters: objectParameters(
-      {
-        title: { type: "string" },
-        timezone: { type: "string" },
-        targetArriveAt: { type: "string" },
-        finalStopName: { type: "string" },
-        stops: arrayOfItems(stopSchema),
-        legs: arrayOfItems(legSchema),
-      },
-      ["title", "timezone", "stops", "legs"]
-    ),
-  },
-  {
-    name: "read_current_trip",
-    description:
-      "Read the current trip with stops, legs, route candidates, buffers, segments, and reminders.",
-    parameters: objectParameters({ tripId: { type: "string" } }),
-  },
-  {
-    name: "update_trip_summary",
-    description:
-      "Update the current trip summary: title, final stop, target arrival, and status.",
-    parameters: objectParameters({
-      tripId: { type: "string" },
-      title: { type: "string" },
-      finalStopName: { type: "string" },
-      targetArriveAt: { type: "string" },
-      status: { type: "string" },
-    }),
-  },
-  {
-    name: "replace_trip_stops",
-    description:
-      "Replace trip stops. Provide legs too to rebuild the complete route transactionally.",
-    parameters: objectParameters({
-      tripId: { type: "string" },
-      title: { type: "string" },
-      finalStopName: { type: "string" },
-      targetArriveAt: { type: "string" },
-      stops: arrayOfItems(stopSchema),
-      legs: arrayOfItems(legSchema),
-    }),
-  },
-  {
-    name: "replace_trip_legs",
-    description:
-      "Replace trip legs. Provide stops too to rebuild the complete route transactionally.",
-    parameters: objectParameters({
-      tripId: { type: "string" },
-      title: { type: "string" },
-      finalStopName: { type: "string" },
-      targetArriveAt: { type: "string" },
-      stops: arrayOfItems(stopSchema),
-      legs: arrayOfItems(legSchema),
-    }),
-  },
-  {
-    name: "select_route_candidate",
-    description: "Select an existing route candidate for a trip leg.",
-    parameters: objectParameters({
-      tripId: { type: "string" },
-      legId: { type: "string" },
-      legOrder: { type: "number" },
-      candidateId: { type: "string" },
-      candidateKey: { type: "string" },
-    }),
-  },
-  {
-    name: "replace_reminder_schedule",
-    description: "Regenerate reminder jobs from the current latest departure times.",
-    parameters: objectParameters({
-      tripId: { type: "string" },
-      legId: { type: "string" },
-      legOrder: { type: "number" },
-      cadenceMinutes: arrayOfItems({ type: "number" }),
-    }),
-  },
-  {
-    name: "cancel_trip_monitoring",
-    description: "Cancel monitoring for the current trip and scheduled reminders.",
-    parameters: objectParameters({ tripId: { type: "string" } }),
-  },
-  {
-    name: "create_memory_candidate",
-    description: "Create a pending memory candidate for user confirmation.",
-    parameters: objectParameters(
-      {
-        tripId: { type: "string" },
-        kind: { type: "string" },
-        label: { type: "string" },
-        valueJson: {},
-      },
-      ["kind", "label", "valueJson"]
-    ),
-  },
-];
-
-const SYSTEM_PROMPT = `You are a personal commute-planning AI. Current dates should be interpreted in Beijing time.
-You must plan, calculate, compare, and decide yourself. The app only exposes tools; it will not hard-code route ranking, destination extraction, or buffer minutes for you.
-Available tools include user settings, memories, all AMap POI/weather/transit/walking/bicycling tools, create_trip, and current-route update tools. You may call tools for as many rounds as needed before timeout. Weather, route results, user preferences, and memories are evidence for your decision, not fixed app rules.
-Before calling get_transit_route, get_walking_route, or get_bicycling_route, provide origin and destination as lng,lat coordinates. Never pass place names directly; call search_poi first and use a returned lngLat value.
-When the user does not explicitly say where to start, use the default origin from read_settings. When the user says they are starting from "我现在的位置", "当前位置", or similar, use the current-location context if it is provided.
-You should actively adapt to weather evidence. In 恶劣天气 such as heavy rain, storms, extreme heat, strong wind, or snow, compare options with less exposed walking or bicycling when possible. If you still choose 长距离步行 or bicycling in bad weather, explain why it remains acceptable, and reflect the weather impact in route rationale and bufferComponents with meaningful minutes when extra time is needed.
-Actively capture stable user preferences. When the user says phrases such as 我习惯, 我偏好, 我不喜欢, 以后都, 通常, or similar durable commute habits, call create_memory_candidate with a concise label and structured valueJson so the user can confirm it later.
-Final user-facing replies must be plain text without Markdown formatting, headings, code ticks, or list markers.`;
-
-function buildCurrentLocationContext(
-  currentLocation: StartPlanningSessionInput["currentLocation"]
-) {
-  if (!currentLocation?.name || !currentLocation.lngLat) {
-    return null;
-  }
-
-  return [
-    "当前定位上下文：",
-    `名称：${currentLocation.name}`,
-    `坐标：${currentLocation.lngLat}`,
-    currentLocation.city ? `城市：${currentLocation.city}` : null,
-    "如果用户说从我现在的位置、当前位置或类似表达出发，请使用这个位置；如果用户没有说明出发点，请继续使用 read_settings 中的默认出发点。",
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
-async function createInitialMessages(
-  session: { id: string; prompt: string; userId: string },
-  attempt: number
-) {
-  const memoryContext = await buildConfirmedMemoryContext(session.userId);
-  const sessionContextMessages = await prisma.agentMessage.findMany({
-    where: { agentSessionId: session.id, role: "system" },
-    orderBy: { createdAt: "asc" },
-  });
-  const messages: AgentChatMessage[] = [
-    { role: "system", content: SYSTEM_PROMPT },
-    { role: "system", content: memoryContext },
-    ...sessionContextMessages.map((message) => ({
-      role: "system" as const,
-      content: message.content,
-    })),
-    {
-      role: "user",
-      content: `第 ${attempt} 次规划尝试：${session.prompt}`,
-    },
-  ];
-
-  return messages;
-}
-
-async function createContinuationMessages(session: {
-  id: string;
-  prompt: string;
-  userId: string;
-  tripId: string | null;
-}) {
-  const memoryContext = await buildConfirmedMemoryContext(session.userId);
-  const persistedMessages = await prisma.agentMessage.findMany({
-    where: { agentSessionId: session.id },
-    orderBy: { createdAt: "asc" },
-  });
-
-  const messages: AgentChatMessage[] = [
-    { role: "system", content: SYSTEM_PROMPT },
-    { role: "system", content: memoryContext },
-    {
-      role: "system",
-      content:
-        "Continue the existing planning session. All planning and route update tools are available. You may call tools for as many rounds as needed until timeout. If a current trip exists, use route update tools to revise it instead of assuming the app will update it for you.",
-    },
-    {
-      role: "system",
-      content: `Original planning prompt: ${session.prompt}. Current trip id: ${
-        session.tripId ?? "none"
-      }.`,
-    },
-  ];
-
-  for (const message of persistedMessages) {
-    if (
-      message.role === "system" ||
-      message.role === "user" ||
-      message.role === "assistant"
-    ) {
-      messages.push({
-        role: message.role,
-        content: message.content,
-      });
-    }
-  }
-
-  return messages;
-}
+import {
+  firstNonEmptyString,
+  getToolCacheKey,
+  normalizeCacheValue,
+  normalizeLngLat,
+  readArray,
+  readNumber,
+  readOptionalArray,
+  readOptionalDate,
+  readOptionalNumber,
+  readOptionalString,
+  readString,
+  requireObject,
+} from "@/lib/agent/planner-readers";
 
 function getToolName(name: string): AgentToolName {
   const allowed = new Set(
@@ -527,153 +259,7 @@ function getToolName(name: string): AgentToolName {
   return name as AgentToolName;
 }
 
-function requireObject(value: unknown, label: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${label} must be an object.`);
-  }
 
-  return value as Record<string, unknown>;
-}
-
-function readString(
-  value: Record<string, unknown>,
-  key: string,
-  fallback?: string
-) {
-  const raw = value[key];
-  if (typeof raw === "string" && raw.trim()) {
-    return raw.trim();
-  }
-
-  if (fallback !== undefined) {
-    return fallback;
-  }
-
-  throw new Error(`Missing string tool argument: ${key}`);
-}
-
-function readOptionalString(value: Record<string, unknown>, key: string) {
-  const raw = value[key];
-  return typeof raw === "string" && raw.trim() ? raw.trim() : undefined;
-}
-
-function readOptionalNumber(value: Record<string, unknown>, key: string) {
-  const raw = value[key];
-  if (raw === undefined || raw === null || raw === "") {
-    return undefined;
-  }
-
-  const numeric = Number(raw);
-  if (!Number.isFinite(numeric)) {
-    throw new Error(`Tool argument ${key} must be a number.`);
-  }
-
-  return numeric;
-}
-
-function readNumber(value: Record<string, unknown>, key: string) {
-  const numeric = readOptionalNumber(value, key);
-  if (numeric === undefined) {
-    throw new Error(`Missing number tool argument: ${key}`);
-  }
-
-  return numeric;
-}
-
-function readOptionalDate(value: Record<string, unknown>, key: string) {
-  const raw = value[key];
-  if (typeof raw !== "string" || !raw.trim()) {
-    return undefined;
-  }
-
-  const date = new Date(raw);
-  if (Number.isNaN(date.getTime())) {
-    throw new Error(`Tool argument ${key} is not a valid date.`);
-  }
-
-  return date;
-}
-
-function readArray(value: Record<string, unknown>, key: string): unknown[] {
-  const raw = value[key];
-  if (!Array.isArray(raw)) {
-    throw new Error(`Tool argument ${key} must be an array.`);
-  }
-
-  return raw;
-}
-
-function readOptionalArray(value: Record<string, unknown>, key: string) {
-  const raw = value[key];
-  if (raw === undefined || raw === null) {
-    return undefined;
-  }
-
-  if (!Array.isArray(raw)) {
-    throw new Error(`Tool argument ${key} must be an array.`);
-  }
-
-  return raw;
-}
-
-function firstNonEmptyString(...values: Array<string | undefined>) {
-  return values.find((value) => typeof value === "string" && value.trim())
-    ?.trim();
-}
-
-function normalizeLngLat(value: string) {
-  const parts = value.split(",").map((part) => part.trim());
-  if (parts.length !== 2) {
-    return null;
-  }
-
-  const normalized = parts.join(",");
-  if (!LNG_LAT_PATTERN.test(normalized)) {
-    return null;
-  }
-
-  const [lng, lat] = parts.map(Number);
-  if (lng < -180 || lng > 180 || lat < -90 || lat > 90) {
-    return null;
-  }
-
-  return normalized;
-}
-
-async function resolveRouteEndpoint(input: {
-  value: string;
-  label: "origin" | "destination";
-  city: string;
-  context: ToolExecutionContext;
-}) {
-  const coordinate = normalizeLngLat(input.value);
-  if (coordinate) {
-    return coordinate;
-  }
-
-  const request = {
-    keywords: input.value,
-    city: input.city,
-  };
-  const pois = await recordToolCall({
-    agentSessionId: input.context.sessionId,
-    name: "search_poi",
-    request,
-    signal: input.context.signal,
-    run: () => input.context.amap.searchPoi(request),
-  });
-  const resolved = pois
-    .map((poi) => normalizeLngLat(poi.lngLat))
-    .find((lngLat): lngLat is string => Boolean(lngLat));
-
-  if (!resolved) {
-    throw new Error(
-      `Unable to resolve route ${input.label} "${input.value}" to lng,lat coordinates.`
-    );
-  }
-
-  return resolved;
-}
 
 function normalizeBufferComponent(value: unknown): BufferComponentInput {
   const component = requireObject(value, "bufferComponents[]");
@@ -688,21 +274,54 @@ function normalizeBufferComponent(value: unknown): BufferComponentInput {
   };
 }
 
-function normalizeStop(value: unknown): PlannedTripStopInput {
+function normalizeStop(value: unknown, timezone?: string): PlannedTripStopInput {
   const stop = requireObject(value, "stops[]");
   return {
     order: readOptionalNumber(stop, "order"),
     name: readString(stop, "name"),
     address: readOptionalString(stop, "address"),
     lngLat: readOptionalString(stop, "lngLat"),
-    targetArriveAt: readOptionalDate(stop, "targetArriveAt"),
+    targetArriveAt: readOptionalDate(stop, "targetArriveAt", timezone, {
+      allowDayMarker: true,
+    }),
     plannedStayMin: readOptionalNumber(stop, "plannedStayMin"),
     kind: readOptionalString(stop, "kind"),
     notes: readOptionalString(stop, "notes"),
   };
 }
 
-function normalizeLeg(value: unknown): PlannedTripLegInput {
+function normalizeRouteEvidence(value: unknown): TravelRouteLegEvidence | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const durationMinutes = Number(record.durationMinutes);
+  if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) {
+    return undefined;
+  }
+
+  const source = record.source === "amap_route" ? "amap_route" : "agent_estimate";
+  const status =
+    record.status === "provider_verified" ? "provider_verified" : "estimated";
+  return {
+    source,
+    status,
+    durationMinutes: Math.round(durationMinutes),
+    modelDurationMinutes:
+      record.modelDurationMinutes === undefined
+        ? undefined
+        : Number(record.modelDurationMinutes),
+    safetyMarginMinutes: Math.max(0, Math.round(Number(record.safetyMarginMinutes) || 0)),
+    observedAt: readOptionalString(record, "observedAt"),
+    summary: readOptionalString(record, "summary") ?? "路线时长证据",
+    note: readOptionalString(record, "note") ?? "出发前重新核验路线。",
+    origin: readOptionalString(record, "origin"),
+    destination: readOptionalString(record, "destination"),
+  };
+}
+
+function normalizeLeg(value: unknown, timezone?: string): PlannedTripLegInput {
   const leg = requireObject(value, "legs[]");
   return {
     order: readOptionalNumber(leg, "order"),
@@ -716,8 +335,12 @@ function normalizeLeg(value: unknown): PlannedTripLegInput {
     bufferComponents: readArray(leg, "bufferComponents").map(
       normalizeBufferComponent
     ),
-    latestDepartAt: readOptionalDate(leg, "latestDepartAt"),
-    targetArriveAt: readOptionalDate(leg, "targetArriveAt"),
+    latestDepartAt: readOptionalDate(leg, "latestDepartAt", timezone, {
+      allowDayMarker: true,
+    }),
+    targetArriveAt: readOptionalDate(leg, "targetArriveAt", timezone, {
+      allowDayMarker: true,
+    }),
     mode: readOptionalString(leg, "mode"),
     routeTitle: readOptionalString(leg, "routeTitle"),
     routeRationale: readOptionalString(leg, "routeRationale"),
@@ -725,24 +348,194 @@ function normalizeLeg(value: unknown): PlannedTripLegInput {
     segmentDetail: readOptionalString(leg, "segmentDetail"),
     segmentSource: readOptionalString(leg, "segmentSource"),
     source: leg.source,
+    routeEvidence: normalizeRouteEvidence(leg.routeEvidence),
   };
 }
 
-function normalizeCreateTripInput(
+
+async function normalizeTravelPlanForContext(
+  value: unknown,
+  context: ToolExecutionContext
+) {
+  try {
+    return normalizeTravelPlan(value);
+  } catch (error) {
+    if (context.purpose !== "travel" || !isTravelTransportValidationError(error)) {
+      throw error;
+    }
+
+    const evidence = await loadTravelTransportEvidence(context.sessionId);
+    if (!evidence) {
+      throw error;
+    }
+
+    return normalizeTravelPlan(
+      completeTravelPlanTransportPayload(value, evidence)
+    );
+  }
+}
+
+function completeTravelPlanArgument(args: Record<string, unknown>) {
+  return completeTravelPlanArrayPayload(args.travelPlan, {
+    attractions: args.attractions,
+      lodging: args.lodging,
+      food: args.food,
+      pitfalls: args.pitfalls,
+      budget: args.budget,
+    });
+}
+
+async function normalizeCreateTripInput(
   args: Record<string, unknown>,
   context: ToolExecutionContext,
   settings: PlanningSettings
-): CreatePlannedTripInput {
+): Promise<CreatePlannedTripInput> {
+  const travelPlanArgument =
+    args.travelPlan === undefined
+      ? undefined
+      : completeTravelPlanArgument(args);
+  let travelPlan =
+    travelPlanArgument === undefined
+      ? undefined
+      : await normalizeTravelPlanForContext(travelPlanArgument, context);
+
+  if (context.purpose === "travel" && !travelPlan) {
+    throw new Error("旅行规划必须提供结构化 travelPlan。");
+  }
+
+  if (context.purpose === "travel" && travelPlan) {
+    assertTravelPlanAttractionCoverage(travelPlan);
+    assertTravelPlanBudget(travelPlan);
+  }
+
+  const timezone = readString(args, "timezone", settings.timezone);
+  const stops = readArray(args, "stops").map((stop) =>
+    normalizeStop(stop, timezone)
+  );
+  let legs = readArray(args, "legs").map((leg) =>
+    normalizeLeg(leg, timezone)
+  );
+  if (context.purpose === "travel" && travelPlan) {
+    const routeEvidence = await annotateTravelRouteEvidence(
+      legs,
+      context
+    );
+    legs = routeEvidence.legs;
+    travelPlan = attachRouteEvidenceSummary(travelPlan, routeEvidence.evidence);
+  }
+  const initialTargetArriveAt = readOptionalDate(
+    args,
+    "targetArriveAt",
+    timezone,
+    { allowDayMarker: context.purpose === "travel" }
+  );
+  const schedule =
+    context.purpose === "travel" && travelPlan
+      ? normalizeTravelItinerarySchedule({
+          prompt: context.prompt,
+          timezone,
+          targetArriveAt: initialTargetArriveAt,
+          stops,
+          legs,
+        })
+      : {
+          targetArriveAt: initialTargetArriveAt,
+          stops,
+          legs,
+          dateRange: undefined,
+      };
+  if (context.purpose === "travel" && travelPlan) {
+    travelPlan = alignTravelPlanDrivingDuration(
+      travelPlan,
+      schedule.legs.map((leg, index) => ({
+        order: leg.order ?? index,
+        routeMinutes: leg.routeMinutes,
+        bufferMinutes: leg.bufferMinutes ?? 0,
+        totalMinutes: leg.totalMinutes,
+        mode: leg.mode,
+        latestDepartAt: leg.latestDepartAt,
+        targetArriveAt: leg.targetArriveAt,
+      })),
+      timezone
+    );
+    const operationalTravelPlan = ensureTravelPlanRouteRiskCoverage(
+      travelPlan,
+      schedule.legs,
+      timezone,
+      context.prompt
+    );
+    assertTravelPlanOperationalCompleteness(operationalTravelPlan, {
+      drivingLegOrders: getTravelDrivingLegOrders(schedule.legs),
+    });
+    travelPlan = operationalTravelPlan;
+  }
+  const travelPlanWithEvidence =
+    context.purpose === "travel" && travelPlan
+      ? await enrichTravelPlanWithToolEvidence(
+          travelPlan,
+          context.sessionId
+        )
+      : travelPlan;
+  const queriedWeatherLocations =
+    context.purpose === "travel" && travelPlan
+      ? await loadCompletedWeatherReferenceCities(context.sessionId)
+      : [];
+  const normalizedTravelPlan =
+    context.purpose === "travel" && travelPlan
+      ? alignTravelPlanPitfallsWithSchedule(
+          addTravelSchedulePitfall(
+            ensureTravelPlanWeatherLocations(
+              ensureTravelPlanWeatherCoverage(
+                travelPlanWithEvidence!,
+                schedule.dateRange
+              ),
+              schedule.stops,
+              queriedWeatherLocations
+            ),
+            schedule.legs,
+            timezone
+          ),
+          schedule.legs,
+          context.prompt,
+          timezone
+        )
+      : travelPlanWithEvidence;
+
+  const alignedTravelPlan =
+    context.purpose === "travel" && normalizedTravelPlan
+      ? alignTravelPlanAttractionsWithRoute(
+          normalizedTravelPlan,
+          schedule.stops,
+          schedule.legs,
+          context.prompt
+        )
+      : normalizedTravelPlan;
+
+  if (context.purpose === "travel" && alignedTravelPlan) {
+    assertTravelPlanAttractionCoverage(alignedTravelPlan, {
+      prompt: context.prompt,
+      requirePlannedRequestedTypes: true,
+    });
+    assertTravelItinerarySchedule({
+      prompt: context.prompt,
+      timezone,
+      stops: schedule.stops,
+      legs: schedule.legs,
+      lodging: alignedTravelPlan.lodging,
+    });
+  }
+
   return {
     userId: context.userId,
     agentSessionId: context.sessionId,
     rawPrompt: context.prompt,
-    timezone: readString(args, "timezone", settings.timezone),
+    timezone,
     title: readString(args, "title"),
-    targetArriveAt: readOptionalDate(args, "targetArriveAt"),
+    targetArriveAt: schedule.targetArriveAt,
     finalStopName: readOptionalString(args, "finalStopName"),
-    stops: readArray(args, "stops").map(normalizeStop),
-    legs: readArray(args, "legs").map(normalizeLeg),
+    stops: schedule.stops,
+    legs: schedule.legs,
+    travelPlan: alignedTravelPlan,
   };
 }
 
@@ -810,31 +603,38 @@ async function loadCurrentRouteInputs(tripId: string, userId: string) {
       kind: stop.kind,
       notes: stop.notes ?? undefined,
     })),
-    legs: trip.legs.map((leg) => ({
-      order: leg.order,
-      originName: leg.originName,
-      originLngLat: leg.originLngLat,
-      destinationName: leg.destinationName,
-      destinationLngLat: leg.destinationLngLat ?? undefined,
-      routeMinutes: leg.selectedCandidate?.routeMinutes ?? 30,
-      bufferMinutes: leg.selectedCandidate?.bufferMinutes ?? undefined,
-      totalMinutes: leg.selectedCandidate?.totalMinutes ?? undefined,
-      latestDepartAt: leg.latestDepartAt ?? undefined,
-      targetArriveAt: leg.targetArriveAt ?? undefined,
-      mode: leg.selectedCandidate?.mode ?? undefined,
-      routeTitle: leg.selectedCandidate?.title ?? undefined,
-      routeRationale: leg.selectedCandidate?.rationale ?? undefined,
-      segmentTitle: leg.routeSegments[0]?.title,
-      segmentDetail: leg.routeSegments[0]?.detail ?? undefined,
-      segmentSource: leg.routeSegments[0]?.source,
-      bufferComponents: leg.bufferComponents.map((component) => ({
-        category: component.category,
-        label: component.label,
-        minutes: component.minutes,
-        reason: component.reason,
-        source: component.source as BufferComponentInput["source"],
-      })),
-    })),
+    legs: trip.legs.map((leg) => {
+      const persistedSource = parseRecordJson(
+        leg.selectedCandidate?.sourceJson
+      );
+      return {
+        order: leg.order,
+        originName: leg.originName,
+        originLngLat: leg.originLngLat,
+        destinationName: leg.destinationName,
+        destinationLngLat: leg.destinationLngLat ?? undefined,
+        routeMinutes: leg.selectedCandidate?.routeMinutes ?? 30,
+        bufferMinutes: leg.selectedCandidate?.bufferMinutes ?? undefined,
+        totalMinutes: leg.selectedCandidate?.totalMinutes ?? undefined,
+        latestDepartAt: leg.latestDepartAt ?? undefined,
+        targetArriveAt: leg.targetArriveAt ?? undefined,
+        mode: leg.selectedCandidate?.mode ?? undefined,
+        routeTitle: leg.selectedCandidate?.title ?? undefined,
+        routeRationale: leg.selectedCandidate?.rationale ?? undefined,
+        segmentTitle: leg.routeSegments[0]?.title,
+        segmentDetail: leg.routeSegments[0]?.detail ?? undefined,
+        segmentSource: leg.routeSegments[0]?.source,
+        source: persistedSource,
+        routeEvidence: normalizeRouteEvidence(persistedSource.routeEvidence),
+        bufferComponents: leg.bufferComponents.map((component) => ({
+          category: component.category,
+          label: component.label,
+          minutes: component.minutes,
+          reason: component.reason,
+          source: component.source as BufferComponentInput["source"],
+        })),
+      };
+    }),
   };
 }
 
@@ -844,15 +644,145 @@ async function normalizeReplaceRouteInput(
 ) {
   const tripId = readTripId(args, context);
   const current = await loadCurrentRouteInputs(tripId, context.userId);
+  const timezone = current.trip.timezone;
   const stopArgs = readOptionalArray(args, "stops");
   const legArgs = readOptionalArray(args, "legs");
-  const stops = stopArgs ? stopArgs.map(normalizeStop) : current.stops;
-  const legs = legArgs ? legArgs.map(normalizeLeg) : current.legs;
+  const stops = stopArgs
+    ? stopArgs.map((stop) => normalizeStop(stop, timezone))
+    : current.stops;
+  let legs = legArgs
+    ? legArgs.map((leg) => normalizeLeg(leg, timezone))
+    : current.legs;
+  let travelPlan =
+    args.travelPlan === undefined
+      ? parseTravelPlanJson(current.trip.travelPlanJson)
+      : await normalizeTravelPlanForContext(
+          completeTravelPlanArgument(args),
+          context
+        );
+
+  if (context.purpose === "travel" && travelPlan && legArgs) {
+    const routeEvidence = await annotateTravelRouteEvidence(
+      legs,
+      context
+    );
+    legs = routeEvidence.legs;
+    travelPlan = attachRouteEvidenceSummary(travelPlan, routeEvidence.evidence);
+  }
+
+  if (context.purpose === "travel" && travelPlan) {
+    assertTravelPlanAttractionCoverage(travelPlan);
+    if (args.travelPlan !== undefined) {
+      assertTravelPlanBudget(travelPlan);
+    }
+  }
 
   if (!stops.length || !legs.length) {
     throw new Error(
       "Replacing stops or legs requires complete route data or an existing route to merge with."
     );
+  }
+
+  const initialTargetArriveAt =
+    readOptionalDate(args, "targetArriveAt", timezone, {
+      allowDayMarker: context.purpose === "travel",
+    }) ??
+    current.trip.targetArriveAt ??
+    undefined;
+  const schedule =
+    context.purpose === "travel" && travelPlan
+      ? normalizeTravelItinerarySchedule({
+          prompt: context.prompt,
+          timezone: current.trip.timezone,
+          targetArriveAt: initialTargetArriveAt,
+          stops,
+          legs,
+        })
+      : {
+          targetArriveAt: initialTargetArriveAt,
+          stops,
+          legs,
+          dateRange: undefined,
+        };
+  if (context.purpose === "travel" && travelPlan) {
+    travelPlan = alignTravelPlanDrivingDuration(
+      travelPlan,
+      schedule.legs.map((leg, index) => ({
+        order: leg.order ?? index,
+        routeMinutes: leg.routeMinutes,
+        bufferMinutes: leg.bufferMinutes ?? 0,
+        totalMinutes: leg.totalMinutes,
+        mode: leg.mode,
+        latestDepartAt: leg.latestDepartAt,
+        targetArriveAt: leg.targetArriveAt,
+      })),
+      current.trip.timezone
+    );
+    const operationalTravelPlan = ensureTravelPlanRouteRiskCoverage(
+      travelPlan,
+      schedule.legs,
+      current.trip.timezone,
+      context.prompt
+    );
+    assertTravelPlanOperationalCompleteness(operationalTravelPlan, {
+      drivingLegOrders: getTravelDrivingLegOrders(schedule.legs),
+    });
+    travelPlan = operationalTravelPlan;
+  }
+  const travelPlanWithEvidence =
+    context.purpose === "travel" && travelPlan
+      ? await enrichTravelPlanWithToolEvidence(
+          travelPlan,
+          context.sessionId
+        )
+      : travelPlan;
+  const queriedWeatherLocations =
+    context.purpose === "travel" && travelPlan
+      ? await loadCompletedWeatherReferenceCities(context.sessionId)
+      : [];
+  const normalizedTravelPlan =
+    context.purpose === "travel" && travelPlan
+      ? alignTravelPlanPitfallsWithSchedule(
+          addTravelSchedulePitfall(
+            ensureTravelPlanWeatherLocations(
+              ensureTravelPlanWeatherCoverage(
+                travelPlanWithEvidence!,
+                schedule.dateRange
+              ),
+              schedule.stops,
+              queriedWeatherLocations
+            ),
+            schedule.legs,
+            current.trip.timezone
+          ),
+          schedule.legs,
+          context.prompt,
+          current.trip.timezone
+        )
+      : travelPlanWithEvidence;
+
+  const alignedTravelPlan =
+    context.purpose === "travel" && normalizedTravelPlan
+      ? alignTravelPlanAttractionsWithRoute(
+          normalizedTravelPlan,
+          schedule.stops,
+          schedule.legs,
+          context.prompt
+        )
+      : normalizedTravelPlan;
+
+  if (context.purpose === "travel" && alignedTravelPlan) {
+    assertTravelPlanAttractionCoverage(alignedTravelPlan, {
+      prompt: context.prompt,
+      requirePlannedRequestedTypes: true,
+    });
+    assertTravelItinerarySchedule({
+      prompt: context.prompt,
+      timezone: current.trip.timezone,
+      stops: schedule.stops,
+      legs: schedule.legs,
+      lodging: alignedTravelPlan.lodging,
+    });
   }
 
   return {
@@ -864,13 +794,11 @@ async function normalizeReplaceRouteInput(
       current.trip.finalStopName ??
       legs[legs.length - 1]?.destinationName ??
       stops[stops.length - 1]?.name,
-    targetArriveAt:
-      readOptionalDate(args, "targetArriveAt") ??
-      current.trip.targetArriveAt ??
-      undefined,
+    targetArriveAt: schedule.targetArriveAt,
     status: readOptionalString(args, "status") ?? "monitoring",
-    stops,
-    legs,
+    stops: schedule.stops,
+    legs: schedule.legs,
+    travelPlan: alignedTravelPlan ?? undefined,
   };
 }
 
@@ -931,22 +859,87 @@ async function executeToolCall(
       keywords: readString(args, "keywords"),
       city: readOptionalString(args, "city") ?? settings.defaultCity,
     };
-    return recordToolCall({
-      agentSessionId: context.sessionId,
+
+    const cacheKey = getToolCacheKey(name, request);
+    const budget = context.travelEvidenceBudget;
+    if (
+      budget &&
+      cacheKey &&
+      !context.toolResultCache.has(cacheKey)
+    ) {
+      if (budget.directPoiSearches >= budget.maxDirectPoiSearches) {
+        const exhaustedResult = {
+          kind: "budget_exhausted",
+          candidates: [],
+          instruction:
+            "本次旅行的地点检索预算已用完。不要再次调用 search_poi；请使用已经返回的地点证据，继续查询路线或立即调用 create_trip。",
+        };
+        context.toolResultCache.set(cacheKey, exhaustedResult);
+        return recordToolCall({
+          agentSessionId: context.sessionId,
+          name,
+          request,
+          signal: context.signal,
+          run: async () => exhaustedResult,
+        });
+      }
+
+      budget.directPoiSearches += 1;
+    }
+
+    return recordCachedToolCall({
+      context,
       name,
       request,
-      signal: context.signal,
       run: () => amap.searchPoi(request),
+    });
+  }
+
+  if (name === "search_natural_attractions") {
+    const city = readOptionalString(args, "city") ?? settings.defaultCity;
+    const requestedLimit = readOptionalNumber(args, "limit") ?? 12;
+    const limit = Math.min(12, Math.max(3, requestedLimit));
+
+    const request = {
+        city,
+        limit,
+        keywordGroups: NATURAL_ATTRACTION_SEARCH_GROUPS,
+      };
+
+    return recordCachedToolCall({
+      context,
+      name,
+      request,
+      run: async () => {
+        const batches = await Promise.all(
+          NATURAL_ATTRACTION_SEARCH_GROUPS.map((keywords) =>
+            amap.searchPoi({ keywords, city })
+          )
+        );
+        const seen = new Set<string>();
+
+        return batches
+          .flat()
+          .filter((poi) => {
+            const key = poi.id || `${poi.name}:${poi.lngLat}`;
+            if (seen.has(key)) {
+              return false;
+            }
+
+            seen.add(key);
+            return true;
+          })
+          .slice(0, limit);
+      },
     });
   }
 
   if (name === "get_poi_detail") {
     const request = { id: readString(args, "id") };
-    return recordToolCall({
-      agentSessionId: context.sessionId,
+    return recordCachedToolCall({
+      context,
       name,
       request,
-      signal: context.signal,
       run: () => amap.getPoiDetail(request),
     });
   }
@@ -966,6 +959,7 @@ async function executeToolCall(
 
   if (
     name === "get_transit_route" ||
+    name === "get_driving_route" ||
     name === "get_walking_route" ||
     name === "get_bicycling_route"
   ) {
@@ -982,15 +976,16 @@ async function executeToolCall(
     const route = (resolvedRequest: typeof request) =>
       name === "get_transit_route"
         ? amap.getTransitRoute(resolvedRequest)
+        : name === "get_driving_route"
+          ? amap.getDrivingRoute(resolvedRequest)
         : name === "get_walking_route"
           ? amap.getWalkingRoute(resolvedRequest)
           : amap.getBicyclingRoute(resolvedRequest);
 
-    return recordToolCall({
-      agentSessionId: context.sessionId,
+    return recordCachedToolCall({
+      context,
       name,
       request,
-      signal: context.signal,
       run: async () => {
         if (!request.origin) {
           throw new Error(ORIGIN_REQUIRED_MESSAGE);
@@ -1012,7 +1007,14 @@ async function executeToolCall(
           }),
         };
 
-        return route(resolvedRequest);
+        const result = await route(resolvedRequest);
+        return {
+          ...result,
+          origin: resolvedRequest.origin,
+          destination: resolvedRequest.destination,
+          requestedOrigin: request.origin,
+          requestedDestination: request.destination,
+        };
       },
     });
   }
@@ -1023,13 +1025,62 @@ async function executeToolCall(
 
   if (name === "update_trip_summary") {
     const tripId = readTripId(args, context);
+    let travelPlan =
+      args.travelPlan === undefined
+        ? undefined
+        : ensureTravelPlanWeatherCoverage(
+            await enrichTravelPlanWithToolEvidence(
+              normalizeTravelPlan(completeTravelPlanArgument(args)),
+              context.sessionId
+            ),
+            parseTravelDateRange(context.prompt) ?? undefined
+          );
+
+    if (context.purpose === "travel" && travelPlan) {
+      const current = await loadCurrentRouteInputs(tripId, context.userId);
+      const queriedWeatherLocations =
+        await loadCompletedWeatherReferenceCities(context.sessionId);
+      travelPlan = ensureTravelPlanWeatherLocations(
+        travelPlan,
+        current.stops,
+        queriedWeatherLocations
+      );
+      travelPlan = alignTravelPlanAttractionsWithRoute(
+        travelPlan,
+        current.stops,
+        current.legs,
+        context.prompt
+      );
+      travelPlan = alignTravelPlanPitfallsWithSchedule(
+        travelPlan,
+        current.legs,
+        context.prompt,
+        current.trip.timezone
+      );
+    }
+
+    if (context.purpose === "travel" && travelPlan) {
+      assertTravelPlanAttractionCoverage(travelPlan, {
+        prompt: context.prompt,
+        requirePlannedRequestedTypes: true,
+      });
+      assertTravelPlanBudget(travelPlan);
+      assertTravelPlanOperationalCompleteness(travelPlan);
+    }
+
     const request = {
       tripId,
       userId: context.userId,
       title: readOptionalString(args, "title"),
       finalStopName: readOptionalString(args, "finalStopName"),
-      targetArriveAt: readOptionalDate(args, "targetArriveAt"),
+      targetArriveAt: readOptionalDate(
+        args,
+        "targetArriveAt",
+        settings.timezone,
+        { allowDayMarker: context.purpose === "travel" }
+      ),
       status: readOptionalString(args, "status"),
+      travelPlan,
     };
     return recordToolCall({
       agentSessionId: context.sessionId,
@@ -1128,16 +1179,16 @@ async function executeToolCall(
     });
   }
 
-  const input = normalizeCreateTripInput(args, context, settings);
   let createdTripId: string | null = null;
 
   try {
     return await recordToolCall({
       agentSessionId: context.sessionId,
       name: "create_trip",
-      request: input,
+      request: args,
       signal: context.signal,
       run: async () => {
+        const input = await normalizeCreateTripInput(args, context, settings);
         const created = await createPlannedTrip(input);
         createdTripId = created.id;
         assertAgentRunActive(context.signal);
@@ -1155,33 +1206,16 @@ async function executeToolCall(
   }
 }
 
-function stringifyToolResult(result: unknown) {
-  return JSON.stringify(result, (_key, value: unknown) => {
-    if (value instanceof Date) {
-      return value.toISOString();
-    }
-
-    return value;
-  });
-}
-
-const CONTINUATION_COMPLETION_TOOL_NAMES = new Set([
-  "replace_trip_stops",
-  "replace_trip_legs",
-  "cancel_trip_monitoring",
-]);
-
-function shouldCompleteContinuationAfterTools(
-  toolCalls: AgentChatToolCall[],
-  requireCreateTrip: boolean
-) {
-  return (
-    !requireCreateTrip &&
-    toolCalls.some((toolCall) =>
-      CONTINUATION_COMPLETION_TOOL_NAMES.has(toolCall.name)
-    )
-  );
-}
+import {
+  mergeCreateTripCandidate,
+  shouldCompleteContinuationAfterTools,
+  stringifyToolError,
+  stringifyToolResult,
+} from "@/lib/agent/planner-recovery";
+export {
+  stringifyToolError,
+  stringifyToolResult,
+} from "@/lib/agent/planner-recovery";
 
 async function runConversationAttempt(input: {
   sessionId: string;
@@ -1193,14 +1227,90 @@ async function runConversationAttempt(input: {
   requireCreateTrip: boolean;
 }) {
   let latestTripId = input.context.tripId ?? null;
+  let forceCreateTrip = false;
+  let forceCreateTripFallbackUsed = false;
+  let conversationRounds = 0;
+  let createTripFailureCount = 0;
+  let lastToolExecutionError: unknown = null;
+  let lastCreateTripCandidate: Record<string, unknown> | null = null;
+  const identicalCreateTripFailures = new Map<string, number>();
+
+  function noteCreateTripFailure(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    createTripFailureCount += 1;
+    const sameFailureCount =
+      (identicalCreateTripFailures.get(message) ?? 0) + 1;
+    identicalCreateTripFailures.set(message, sameFailureCount);
+
+    if (
+      createTripFailureCount >= MAX_CREATE_TRIP_FAILURES ||
+      sameFailureCount >= MAX_IDENTICAL_CREATE_TRIP_FAILURES
+    ) {
+      throw new AgentConversationLimitError(
+        sameFailureCount >= MAX_IDENTICAL_CREATE_TRIP_FAILURES
+          ? `create_trip 连续收到相同的结构化校验错误，已停止重复请求：${message}`
+          : `create_trip 已连续失败 ${createTripFailureCount} 次，已停止重复请求。最后一次错误：${message}`
+      );
+    }
+  }
 
   while (true) {
     assertAgentRunActive(input.signal);
-    const completion = await input.chatClient.complete({
-      messages: input.messages,
-      tools: TOOL_DEFINITIONS,
-      signal: input.signal,
-    });
+    conversationRounds += 1;
+    const maxRounds =
+      input.context.maxConversationRounds ??
+      MAX_CONVERSATION_ROUNDS[input.context.purpose];
+    if (conversationRounds > maxRounds) {
+      throw new AgentConversationLimitError(
+        `${input.context.purpose === "travel" ? "旅行" : "通勤"}规划超过 ${maxRounds} 轮对话仍未完成，已停止重复调用工具；请缩短需求或稍后重试。`
+      );
+    }
+    let completion;
+
+    try {
+      completion = await input.chatClient.complete({
+        messages: input.messages,
+        tools: getAgentToolDefinitions(input.context.purpose),
+        purpose: input.context.purpose,
+        maxOutputTokens:
+          input.context.purpose === "travel"
+            ? TRAVEL_MAX_OUTPUT_TOKENS
+            : undefined,
+        model:
+          input.context.purpose === "travel"
+            ? TRAVEL_PLANNING_MODEL
+            : input.settings.model,
+        toolChoice: forceCreateTrip && input.context.purpose !== "travel"
+          ? { type: "function", function: { name: "create_trip" } }
+          : undefined,
+        signal: input.signal,
+      });
+    } catch (error) {
+      if (forceCreateTrip && !forceCreateTripFallbackUsed) {
+        forceCreateTrip = false;
+        forceCreateTripFallbackUsed = true;
+        input.messages.push({
+          role: "user",
+          content:
+            "工具调用校验：请立即调用 create_trip 落地当前完整方案；不要只返回文字。",
+        });
+        continue;
+      }
+
+      if (lastToolExecutionError) {
+        const toolError =
+          lastToolExecutionError instanceof Error
+            ? lastToolExecutionError.message
+            : String(lastToolExecutionError);
+        throw new Error(
+          `工具调用失败：${toolError}；模型未能继续修正：${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
+
+      throw error;
+    }
     const assistantMessage = completion.message;
     input.messages.push(assistantMessage);
 
@@ -1218,6 +1328,20 @@ async function runConversationAttempt(input: {
 
     const toolCalls = assistantMessage.toolCalls ?? [];
     if (toolCalls.length === 0) {
+      if (
+        input.requireCreateTrip &&
+        !forceCreateTrip &&
+        !forceCreateTripFallbackUsed
+      ) {
+        forceCreateTrip = true;
+        input.messages.push({
+          role: "user",
+          content:
+            "工具调用校验：证据已经足够。请立即调用 create_trip 落地完整行程，不要再解释或以纯文本结束。",
+        });
+        continue;
+      }
+
       if (input.requireCreateTrip) {
         throw new Error("AI 结束了规划，但没有调用 create_trip。");
       }
@@ -1228,13 +1352,83 @@ async function runConversationAttempt(input: {
       };
     }
 
+    let hadToolExecutionError = false;
+
     for (const toolCall of toolCalls) {
       assertAgentRunActive(input.signal);
-      const result = await executeToolCall(
-        toolCall,
-        input.context,
-        input.settings
-      );
+
+      if (toolCall.parseError) {
+        hadToolExecutionError = true;
+        if (input.requireCreateTrip && toolCall.name === "create_trip") {
+          forceCreateTrip = true;
+        }
+
+        if (toolCall.name === "create_trip") {
+          const parseFailure = new Error(
+            toolCall.parseError || "工具参数无法解析。"
+          );
+          await recordFailedToolCall({
+            agentSessionId: input.sessionId,
+            name: "create_trip",
+            request: {
+              arguments: toolCall.arguments,
+              parseError: toolCall.parseError,
+            },
+            error: parseFailure,
+            signal: input.signal,
+          });
+          noteCreateTripFailure(parseFailure);
+        }
+
+        input.messages.push({
+          role: "tool",
+          toolCallId: toolCall.id,
+          content: JSON.stringify({
+            error:
+              "工具参数无法解析。请立即重新调用该工具，并输出完整、合法且不截断的 JSON 参数。压缩叙述，避免重复路线和天气信息；自然景点最多 6 个、人文景点最多 3 个、住宿和美食各最多 4 个、避坑最多 8 条，每个自驾路段只保留 1 条 routeRisk。",
+          }),
+        });
+        continue;
+      }
+
+      let result: unknown;
+      const executionToolCall: AgentChatToolCall =
+        toolCall.name === "create_trip" && lastCreateTripCandidate
+          ? {
+              ...toolCall,
+              arguments: mergeCreateTripCandidate(
+                lastCreateTripCandidate,
+                toolCall.arguments
+              ),
+            }
+          : toolCall;
+      try {
+        result = await executeToolCall(
+          executionToolCall,
+          input.context,
+          input.settings
+        );
+      } catch (error) {
+        assertAgentRunActive(input.signal);
+        hadToolExecutionError = true;
+        lastToolExecutionError = error;
+        if (toolCall.name === "create_trip") {
+          const currentCandidate: Record<string, unknown> =
+            executionToolCall.arguments;
+          if (Object.keys(currentCandidate).length > 0) {
+            lastCreateTripCandidate = currentCandidate;
+          }
+        }
+        input.messages.push({
+          role: "tool",
+          toolCallId: toolCall.id,
+          content: stringifyToolError(error),
+        });
+        if (toolCall.name === "create_trip") {
+          noteCreateTripFailure(error);
+        }
+        continue;
+      }
       const explicitTripId = readOptionalString(toolCall.arguments, "tripId");
       if (explicitTripId) {
         input.context.tripId = explicitTripId;
@@ -1267,6 +1461,26 @@ async function runConversationAttempt(input: {
       }
     }
 
+    if (hadToolExecutionError) {
+      continue;
+    }
+
+    const travelEvidenceBudget = input.context.travelEvidenceBudget;
+    if (
+      input.context.purpose === "travel" &&
+      travelEvidenceBudget &&
+      travelEvidenceBudget.directPoiSearches >=
+        travelEvidenceBudget.maxDirectPoiSearches &&
+      !travelEvidenceBudget.exhaustionNudgeSent
+    ) {
+      travelEvidenceBudget.exhaustionNudgeSent = true;
+      input.messages.push({
+        role: "user",
+        content:
+          "旅行地点检索预算已用完。请停止 search_poi，不要再尝试新的空关键词；使用当前已经获得的自然景点、人文景点、住宿和美食证据，立即查询自驾与公共交通路线，然后调用 create_trip 落地完整行程。",
+      });
+    }
+
     if (shouldCompleteContinuationAfterTools(toolCalls, input.requireCreateTrip)) {
       const summary = "AI 已更新当前行程。";
       await createAssistantMessage({
@@ -1286,17 +1500,20 @@ async function runConversationAttempt(input: {
 
 export async function startPlanningSession({
   currentLocation,
+  purpose,
   userId,
   prompt,
 }: StartPlanningSessionInput) {
   const normalizedPrompt = normalizePrompt(prompt);
   const currentLocationContext = buildCurrentLocationContext(currentLocation);
+  const normalizedPurpose: AgentPlanningPurpose =
+    purpose === "travel" ? "travel" : "planning";
 
   return prisma.agentSession.create({
     data: {
       userId,
       status: "running",
-      purpose: "planning",
+      purpose: normalizedPurpose,
       prompt: normalizedPrompt,
       timeoutMs: SESSION_TIMEOUT_MS,
       messages: {
@@ -1314,11 +1531,110 @@ export async function startPlanningSession({
   });
 }
 
+const FALLBACK_TRAVEL_THEMES: TravelRouteTheme[] = [
+  { label: "经典全景环线", focus: "覆盖目的地最具代表性的自然与人文景点，节奏适中，适合首次到访" },
+  { label: "深度人文自然", focus: "避开热门打卡点，深入当地文化与小众自然景观，体验更沉浸" },
+  { label: "摄影与避暑专线", focus: "选取人少景美、光线条件好的时段与地点，适合摄影与休闲" },
+];
+
+async function generateTravelThemes(
+  prompt: string,
+  chatClient: AgentChatClient
+): Promise<TravelRouteTheme[]> {
+  const themePrompt = `You are a travel route strategist. Based on the following travel request, propose 3 distinctly different route themes. Each theme must have a different emphasis (e.g. classic must-see, off-the-beaten-path culture, photography/leisure, adventure, food-focused, etc.). Return ONLY a JSON array of exactly 3 objects, each with "label" (a short Chinese name like "经典全景环线") and "focus" (one Chinese sentence describing the theme's distinguishing angle). The 3 themes must be genuinely different in scenery type, pace, and transport preference.
+
+Travel request: ${prompt}`;
+
+  try {
+    const result = await chatClient.complete({
+      messages: [
+        { role: "system", content: "You are a JSON-only API. Return a JSON array, no prose, no markdown." },
+        { role: "user", content: themePrompt },
+      ],
+      tools: [],
+      model: TRAVEL_PLANNING_MODEL,
+      purpose: "travel",
+    });
+    const raw = result.message.content?.trim() ?? "";
+    const jsonMatch = raw.match(/\[[\s\S]*\]/);
+    const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.length < 2) {
+      throw new Error("insufficient themes");
+    }
+    const themes: TravelRouteTheme[] = parsed
+      .slice(0, 3)
+      .filter(
+        (item): item is TravelRouteTheme =>
+          item &&
+          typeof item === "object" &&
+          typeof item.label === "string" &&
+          typeof item.focus === "string"
+      )
+      .map((item) => ({ label: item.label, focus: item.focus }));
+    return themes.length >= 2 ? themes : FALLBACK_TRAVEL_THEMES;
+  } catch {
+    return FALLBACK_TRAVEL_THEMES;
+  }
+}
+
 export async function runPlanningSession(
   sessionId: string,
   options: RunPlanningSessionOptions = {}
 ): Promise<PlanningSessionResult> {
+  const session = await prisma.agentSession.findUniqueOrThrow({
+    where: { id: sessionId },
+  });
+  const isTravel = session.purpose === "travel";
+
   try {
+    if (isTravel && !options.singleRoute) {
+      const chatClient = options.chatClient ?? createOpenAiChatClient();
+      const themes = await generateTravelThemes(session.prompt, chatClient);
+      await prisma.agentSession.update({
+        where: { id: sessionId },
+        data: { routeThemesJson: JSON.stringify(themes) },
+      });
+
+      const tripIds: string[] = [];
+      for (const [index, theme] of themes.entries()) {
+        try {
+          const result = await runWithTimeoutAndRetry({
+            timeoutMs: SESSION_TIMEOUT_MS,
+            maxAttempts: SESSION_MAX_ATTEMPTS,
+            run: async ({ attempt, signal }) =>
+              runPlanningAttempt(sessionId, attempt, signal, options, {
+                theme,
+                themeOrder: index,
+              }),
+          });
+          if (result.value.tripId) {
+            tripIds.push(result.value.tripId);
+          }
+        } catch {
+          // A single theme failing should not abort the remaining themes.
+        }
+      }
+
+      if (tripIds.length === 0) {
+        throw new Error("所有主题路线规划均失败。");
+      }
+
+      await prisma.agentSession.update({
+        where: { id: sessionId },
+        data: {
+          status: "completed",
+          tripId: tripIds[0],
+        },
+      });
+
+      return {
+        sessionId,
+        status: "completed",
+        tripId: tripIds[0],
+        tripIds,
+      };
+    }
+
     const result = await runWithTimeoutAndRetry({
       timeoutMs: SESSION_TIMEOUT_MS,
       maxAttempts: SESSION_MAX_ATTEMPTS,
@@ -1339,6 +1655,7 @@ export async function runPlanningSession(
       sessionId,
       status: "completed",
       tripId: result.value.tripId,
+      tripIds: [result.value.tripId],
     };
   } catch (error) {
     const timedOut = error instanceof AgentRunTimeoutError;
@@ -1483,8 +1800,14 @@ async function runContinuationAttempt(
     sessionId,
     userId: session.userId,
     prompt: session.prompt,
+    purpose: session.purpose === "travel" ? "travel" : "planning",
     tripId: session.tripId,
     signal,
+    toolResultCache: new Map(),
+    travelEvidenceBudget: createTravelEvidenceBudget(
+      session.purpose === "travel" ? "travel" : "planning",
+      session.prompt
+    ),
   };
   const messages = await createContinuationMessages(session);
   const result = await runConversationAttempt({
@@ -1507,7 +1830,8 @@ export async function runPlanningAttempt(
   sessionId: string,
   attempt = 1,
   signal?: AbortSignal,
-  options: RunPlanningSessionOptions = {}
+  options: RunPlanningSessionOptions = {},
+  variantOptions?: { theme?: TravelRouteTheme; themeOrder?: number }
 ): Promise<PlanningAttemptResult> {
   assertAgentRunActive(signal);
   const session = await prisma.agentSession.findUniqueOrThrow({
@@ -1520,14 +1844,29 @@ export async function runPlanningAttempt(
     sessionId,
     userId: session.userId,
     prompt: session.prompt,
+    purpose: session.purpose === "travel" ? "travel" : "planning",
     signal,
+    toolResultCache: new Map(),
+    travelEvidenceBudget: createTravelEvidenceBudget(
+      session.purpose === "travel" ? "travel" : "planning",
+      session.prompt
+    ),
+    // Multi-route themed attempts need more rounds: the model must re-gather
+    // theme-specific evidence and recover from more validation rejections.
+    maxConversationRounds: variantOptions?.theme ? 20 : undefined,
   };
-  const messages = await createInitialMessages(session, attempt);
+  const messages = await createInitialMessages(
+    session,
+    attempt,
+    variantOptions?.theme
+  );
 
   await createAssistantMessage({
     sessionId,
     signal,
-    content: `第 ${attempt} 次规划尝试：AI 可以持续调用工具，直到创建最终行程。`,
+    content: variantOptions?.theme
+      ? `第 ${attempt} 次规划尝试（${variantOptions.theme.label}）：AI 可以持续调用工具，直到创建最终行程。`
+      : `第 ${attempt} 次规划尝试：AI 可以持续调用工具，直到创建最终行程。`,
   });
 
   const result = await runConversationAttempt({

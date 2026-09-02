@@ -2,6 +2,7 @@ import React from "react";
 
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
+import { getPlanningModelOptions } from "@/lib/agent/model-config";
 import { getCurrentUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
 import { readEnv } from "@/lib/env";
@@ -24,6 +25,8 @@ export default async function SettingsPage() {
   const values = {
     defaultCity: settings?.defaultCity ?? env.defaultCity,
     timezone: settings?.timezone ?? env.defaultTimezone,
+    model: settings?.model ?? env.openAiModel,
+    modelConfigured: env.hasOpenAiKey,
     originName: settings?.originName ?? "",
     originLngLat: settings?.originLngLat ?? "",
     routePreference: settings?.routePreference ?? "balanced",
@@ -42,7 +45,10 @@ export default async function SettingsPage() {
           <h1 className="text-3xl font-semibold text-on-surface">设置</h1>
         </div>
 
-        <SettingsForm values={values} />
+        <SettingsForm
+          modelOptions={getPlanningModelOptions()}
+          values={values}
+        />
 
         <ProjectAttribution />
       </section>

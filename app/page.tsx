@@ -6,6 +6,7 @@ import {
   Clock3,
   History,
   Navigation,
+  Settings2,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { GlassCard } from "@/components/glass-card";
@@ -21,6 +22,11 @@ import {
   type HomeTripStatusTone,
 } from "@/lib/home/summary";
 import { getTripDisplayStatus } from "@/lib/trips/display-status";
+import {
+  getDefaultPlanningModel,
+  getPlanningModelOptions,
+  TRAVEL_PLANNING_MODEL,
+} from "@/lib/agent/model-config";
 
 const toneClasses: Record<HomeTripStatusTone, string> = {
   danger: "bg-[#ffdad6] text-[#93000a]",
@@ -100,6 +106,10 @@ export default async function HomePage() {
     firstLeg?.selectedCandidate?.totalMinutes ??
     firstLeg?.selectedCandidate?.routeMinutes ??
     null;
+  const commuteModel = settings?.model ?? getDefaultPlanningModel();
+  const commuteModelLabel =
+    getPlanningModelOptions().find(([value]) => value === commuteModel)?.[1] ??
+    commuteModel;
 
   return (
     <AppShell active="home">
@@ -112,6 +122,33 @@ export default async function HomePage() {
         <section className="py-4">
           <CommuteInput />
         </section>
+
+        <Link className="block min-w-0" href="/settings">
+          <GlassCard className="p-5 transition hover:bg-white/85">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex min-w-0 items-start gap-3">
+                <div className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-[#dae2fd] text-[#1d3d7c]">
+                  <Settings2 aria-hidden="true" className="size-5" />
+                </div>
+                <div className="min-w-0">
+                  <h2 className="text-base font-bold text-[#191c1e]">
+                    模型与接入设置
+                  </h2>
+                  <p className="mt-1 text-sm leading-6 text-[#434655]">
+                    通勤：{commuteModelLabel} · 旅行固定：{TRAVEL_PLANNING_MODEL}
+                  </p>
+                  <p className="mt-1 text-xs font-semibold text-[#737686]">
+                    进入设置页选择通勤模型，并测试服务器实际接入状态
+                  </p>
+                </div>
+              </div>
+              <ArrowRight
+                aria-hidden="true"
+                className="mt-1 size-5 shrink-0 text-[#2563eb]"
+              />
+            </div>
+          </GlassCard>
+        </Link>
 
         <section className="grid min-w-0 gap-4 md:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
           <Link className="block min-w-0" href={latestTripHref}>

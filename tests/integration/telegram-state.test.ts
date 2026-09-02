@@ -50,7 +50,7 @@ describe("telegram state service", () => {
     const chatId = `trips-${Date.now()}`;
     const user = await createTelegramUser("trips", chatId);
     const monitoring = await createTrip(user.id, "home-monitoring", "monitoring");
-    await markReminderJobsDone(monitoring.id, 2);
+    await markReminderJobsDone(monitoring.id, 1);
     await createTrip(user.id, "home-cancelled", "cancelled");
 
     const planningTrips = [];
@@ -74,7 +74,7 @@ describe("telegram state service", () => {
     ]);
     expect(trips[0]).toMatchObject({
       title: "home-monitoring",
-      scheduledReminderCount: 4,
+      scheduledReminderCount: 0,
     });
   });
 
